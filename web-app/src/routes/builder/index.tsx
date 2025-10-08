@@ -13,6 +13,8 @@ import {
   IconSearch,
   IconX,
   IconRobot,
+  IconFileExport,
+  IconFileImport,
 } from '@tabler/icons-react'
 import AddBuilderDialog from '@/containers/dialogs/AddBuilderDialog'
 import { DeleteBuilderDialog } from '@/containers/dialogs/DeleteBuilderDialog'
@@ -45,6 +47,28 @@ function BuilderContent() {
     setDeleteConfirmOpen(true)
   }
 
+  const handleExport = (id: string) => {
+    const builder = getBuilderById(id)
+    if (!builder) return
+    // include board snapshot if present
+    let payload: any = { ...builder }
+    try {
+      const key = `builder:${id}:board`
+      const raw = localStorage.getItem(key)
+      if (raw) payload.board = JSON.parse(raw)
+    } catch {}
+    const dataStr = JSON.stringify(payload, null, 2)
+    const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr)
+    const exportFileDefaultName = `agent-${builder.name
+      .toLowerCase()
+      .replace(/\s+/g, '-')}.json`
+    const linkElement = document.createElement('a')
+    linkElement.setAttribute('href', dataUri)
+    linkElement.setAttribute('download', exportFileDefaultName)
+    linkElement.click()
+    linkElement.remove()
+  }
+  
   const handleDeleteClose = () => {
     setDeleteConfirmOpen(false)
     setDeletingId(null)
@@ -84,6 +108,8 @@ function BuilderContent() {
       <HeaderPage>
         <div className="flex items-center justify-between w-full mr-2">
           <span>{t('builder:listTitle')}</span>
+          <div>
+
           <Button
             onClick={() => {
               setEditingKey(null)
@@ -95,6 +121,47 @@ function BuilderContent() {
             <IconCirclePlus size={16} />
             {t('builder:addAgent')}
           </Button>
+          {/* Import JSON button */}
+          <input id="builder-import-input" type="file" accept=".json,application/json" style={{ display: 'none' }} onChange={async (ev) => {
+            try {
+              const file = ev.target.files && ev.target.files[0]
+              if (!file) return
+              const text = await file.text()
+              const payload = JSON.parse(text)
+              const name = payload.name || 'imported-builder'
+              // if payload.id corresponds to existing builder, update it; otherwise create a new builder
+              let targetId: string | null = null
+              if (payload.id) {
+                const existing = getBuilderById(payload.id)
+                if (existing) {
+                  await updateBuilder(payload.id, name)
+                  targetId = payload.id
+                }
+              }
+              if (!targetId) {
+                const created = await addBuilder(name)
+                targetId = created.id
+              }
+              if (payload.board) {
+                try { localStorage.setItem(`builder:${targetId}:board`, JSON.stringify(payload.board)) } catch {}
+              }
+              // reset input
+              ;(ev.target as HTMLInputElement).value = ''
+              // navigate to imported builder
+              navigate({ to: route.builder.detail, params: { builderId: targetId } })
+            } catch (err) {
+              console.error('Import failed', err)
+              alert('Import failed: invalid JSON')
+            }
+          }} />
+          <Button
+            onClick={() => document.getElementById('builder-import-input')?.click()}
+            size="sm"
+            className="relative z-50 ml-2"
+          >
+            <IconFileImport size={16} />
+          </Button>
+          </div>
         </div>
       </HeaderPage>
       <div className="h-full overflow-y-auto flex flex-col">
@@ -187,6 +254,16 @@ function BuilderContent() {
                           </div>
                         </div>
                         <div className="flex items-center">
+                          <button
+                            className="size-8 cursor-pointer flex items-center justify-center rounded-md hover:bg-main-view-fg/10 transition-all duration-200 ease-in-out"
+                            title={t('builder:exportAgent')}
+                            onClick={() => handleExport(builder.id)}
+                          >
+                            <IconFileExport
+                              size={16}
+                              className="text-main-view-fg/50"
+                            />
+                          </button>
                           <button
                             className="size-8 cursor-pointer flex items-center justify-center rounded-md hover:bg-main-view-fg/10 transition-all duration-200 ease-in-out"
                             title={t('builder:deleteAgent')}

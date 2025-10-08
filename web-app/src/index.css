@@ -15,6 +15,7 @@
   --color-main-view: var(--app-main-view);
   --color-main-view-fg: var(--app-main-view-fg);
   --color-primary: var(--app-primary);
+  --border-primary: var(--app-primary);
   --color-primary-fg: var(--app-primary-fg);
   --color-accent: var(--app-accent);
   --color-accent-fg: var(--app-accent-fg);
