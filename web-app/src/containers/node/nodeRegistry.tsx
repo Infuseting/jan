@@ -1,8 +1,8 @@
-import IfNode, { IfNodeConfig } from './IfNode'
-import WhileNode from './WhileNode'
-import ForNode from './ForNode'
-import CronTrigger, { CronTriggerConfig } from './CronTrigger'
-import ThreadMessageTrigger, { ThreadMessageTriggerConfig } from './ThreadMessageTrigger'
+import { nodeEntry as ifNodeEntry } from './IfNode'
+import { nodeEntry as whileNodeEntry } from './WhileNode'
+import { nodeEntry as forNodeEntry } from './ForNode'
+import { nodeEntry as cronNodeEntry } from './CronTrigger'
+import { nodeEntry as threadMessageNodeEntry } from './ThreadMessageTrigger'
 import React from 'react'
 
 // default fallbacks
@@ -34,15 +34,17 @@ export type NodeEntry = {
   component: React.ComponentType<any>
   config?: React.ComponentType<any> | null
   defaultMeta?: Record<string, any>
+  // optional display metadata used by the UI (icon, short description)
+  display?: {
+    Icon?: React.ComponentType<any>
+    title?: string
+    description?: string
+  }
 }
 
-const registry: NodeEntry[] = [
-  { id: 'if', title: 'If', type: 'note', category: 'Control/Conditional', component: IfNode, config: IfNodeConfig },
-  { id: 'while', title: 'While', type: 'note', category: 'Control/Loop', component: WhileNode, config: null },
-  { id: 'for', title: 'For', type: 'note', category: 'Control/Loop', component: ForNode, config: null },
-  { id: 'cron', title: 'Cron Trigger', type: 'note', category: 'Trigger', component: CronTrigger, config: CronTriggerConfig, defaultMeta: { cron: '0 * * * *' } },
-  { id: 'thread_message', title: 'Thread Message Trigger', type: 'note', category: 'Trigger', component: ThreadMessageTrigger, config: ThreadMessageTriggerConfig, defaultMeta: { threadId: '', match: '' } },
-]
+// Build registry from node-local entries. This keeps node metadata colocated with the node implementation.
+// the per-node files now export a full `nodeEntry` (including component & config)
+const registry: NodeEntry[] = [ifNodeEntry, whileNodeEntry, forNodeEntry, cronNodeEntry, threadMessageNodeEntry]
 
 export const nodeRegistry = registry
 

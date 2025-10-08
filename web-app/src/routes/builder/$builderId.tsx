@@ -5,7 +5,7 @@ import { useBuilderManagement } from '@/hooks/useBuilderManagement'
 import Whiteboard from '@/components/Whiteboard'
 import { useLeftPanel } from '@/hooks/useLeftPanel'
 import { Button } from '@/components/ui/button'
-import { IconDeviceFloppy } from '@tabler/icons-react'
+import { IconArrowLeft, IconDeviceFloppy, IconPlayCard1, IconPlayerPlay } from '@tabler/icons-react'
 
 export const Route = createFileRoute('/builder/$builderId')({
   component: RouteComponent,
@@ -73,15 +73,30 @@ function RouteComponent() {
 
   return (
     <div className="relative h-full w-full bg-main-view">
-      {/* Absolute Save & Back button top-left */}
-      <div className="fixed top-4 left-4 z-50">
-        <Button
-          onClick={handleSaveAndBack}
-          size="sm"
-          className="flex items-center gap-2"
-        >
-          <IconDeviceFloppy />
-        </Button>
+      <div className="fixed top-4 z-50 flex items-center justify-between gap-2 w-full">
+        <div className="flex items-center gap-2 pl-4">
+          <IconArrowLeft
+            size={24}
+            className="cursor-pointer text-main-view-fg/70 hover:text-main-view-fg"
+            onClick={handleSaveAndBack}
+          />
+          <p className="text-main-view-fg/70">{name}</p>
+        </div>
+        <div className="right-4 flex items-center gap-2 pr-4">
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex items-center gap-1 border-1 border-main-view-fg/20"
+          ><IconPlayerPlay />Preview</Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="ml-2 flex items-center gap-1 border-1 border-main-view-fg/20 "
+            >
+              Publish
+            </Button>
+        </div>
+        
       </div>
 
 

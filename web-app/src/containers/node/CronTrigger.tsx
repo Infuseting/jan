@@ -1,5 +1,6 @@
 import NodeBase from '@/containers/NodeBase'
 import { useState, useEffect } from 'react'
+import { IconClock } from '@tabler/icons-react'
 
 function encodeCronForUrl(cron: string) {
   // crontab.guru expects spaces replaced by underscores in the fragment, but
@@ -46,4 +47,15 @@ export function CronTriggerConfig({ meta, setMeta }: { meta?: Record<string, any
       </div>
     </div>
   )
+}
+
+export const nodeEntry = {
+  id: 'cron',
+  title: 'Cron Trigger',
+  type: 'note' as const,
+  category: 'Trigger',
+  component: CronTrigger,
+  config: CronTriggerConfig,
+  defaultMeta: { cron: '0 * * * *' },
+  display: { Icon: IconClock, title: 'Cron Trigger', description: 'Trigger on a cron schedule' },
 }

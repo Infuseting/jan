@@ -1,5 +1,6 @@
 import NodeBase from '@/containers/NodeBase'
 import { useState, useEffect } from 'react'
+import { IconPlayerPlay } from '@tabler/icons-react'
 
 export default function IfNode({ id, selected }: { id: string; selected?: boolean }) {
   return (
@@ -52,7 +53,6 @@ export function IfNodeConfig({ meta, setMeta }: { meta?: Record<string, any>; se
 
   const addCondition = () => setConditions((arr) => {
     // if there is at least one condition, ensure the previous condition has a join operator
-    const prev = arr[arr.length - 1]
     const newCond = { id: makeId(), type: 'boolean', left: '', comparator: 'isTrue', right: '' }
     const next = arr.length === 0 ? [newCond] : arr.map((c, i) => i === arr.length - 1 ? { ...c, join: c.join || 'AND' } : c).concat(newCond)
     writeMeta(next)
@@ -122,4 +122,15 @@ export function IfNodeConfig({ meta, setMeta }: { meta?: Record<string, any>; se
       <div className="text-xs text-muted-foreground">Supported comparators: boolean (isTrue/isFalse), number (==, !=, &gt;, &lt;...), string (contains, startsWith...), date (before/after/on), other (exists/notExists).</div>
     </div>
   )
+}
+
+// node metadata exported so the registry can be assembled from each node file
+export const nodeEntry = {
+  id: 'if',
+  title: 'If',
+  type: 'note' as const,
+  category: 'Control/Conditional',
+  component: IfNode,
+  config: IfNodeConfig,
+  display: { Icon: IconPlayerPlay, title: 'If', description: 'Branch when a condition is true/false' },
 }

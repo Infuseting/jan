@@ -1,5 +1,6 @@
 import NodeBase from '@/containers/NodeBase'
 import { useState } from 'react'
+import { IconMessage } from '@tabler/icons-react'
 
 export default function ThreadMessageTrigger({ id, meta, onMetaChange, selected }: { id: string; meta?: Record<string, any>; onMetaChange?: (m: Record<string, any>) => void; selected?: boolean }) {
   const [threadId, setThreadId] = useState<string>((meta && meta.threadId) || '')
@@ -23,4 +24,15 @@ export function ThreadMessageTriggerConfig({ meta, setMeta }: { meta?: Record<st
       <input value={(meta && meta.match) || ''} onChange={(e) => setMeta({ ...(meta || {}), match: e.target.value })} className="p-2 rounded border" />
     </div>
   )
+}
+
+export const nodeEntry = {
+  id: 'thread_message',
+  title: 'Thread Message Trigger',
+  type: 'note' as const,
+  category: 'Trigger',
+  component: ThreadMessageTrigger,
+  config: ThreadMessageTriggerConfig,
+  defaultMeta: { threadId: '', match: '' },
+  display: { Icon: IconMessage, title: 'Thread Message', description: 'Trigger when a thread message matches' },
 }

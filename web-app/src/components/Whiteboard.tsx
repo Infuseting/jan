@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { nodeRegistry as centralNodeRegistry, getNodeComponent, getNodeConfig } from '@/containers/node/nodeRegistry'
 import NodeConfigDialog from '@/containers/dialogs/NodeConfigDialog'
+import NodesListPanel from '@/containers/NodesListPanel'
 import { IconCursorOff, IconCursorText, IconHandGrab, IconMouse, IconPoint, IconPointer, IconPointerBolt, IconPointerCheck, IconPointerX, IconSelect } from '@tabler/icons-react';
 // configs are provided by the node registry (nodeMap -> config)
 
@@ -712,48 +713,14 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
         }}
       </NodeConfigDialog>
 
-      {/* Palette panel (right side) */}
-      {paletteOpen && (
-        <div className="absolute top-16 right-4 z-60 w-80 bg-main-view-fg/6 text-main-view-fg rounded-md border border-main-view-fg/10 p-3 shadow-lg">
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-            <input
-              value={paletteSearch}
-              onChange={(e) => setPaletteSearch(e.target.value)}
-              placeholder="Search nodes..."
-              style={{ flex: 1, padding: '6px 8px', borderRadius: 6 }}
-            />
-            <button onClick={() => setPaletteOpen(false)} style={{ padding: '6px 8px' }}>Close</button>
-          </div>
-
-          {/* group nodes by category */}
-          {(() => {
-            const q = paletteSearch.trim().toLowerCase()
-            const groups: Record<string, typeof nodeRegistry> = {}
-            for (const n of nodeRegistry) {
-              if (q && !n.title.toLowerCase().includes(q) && !(n.category || '').toLowerCase().includes(q)) continue
-              const cat = n.category || 'Other'
-              groups[cat] = groups[cat] || []
-              groups[cat].push(n)
-            }
-            return Object.keys(groups).length === 0 ? (
-              <div className="text-sm text-muted-foreground">No nodes</div>
-            ) : (
-              Object.entries(groups).map(([cat, items]) => (
-                <div key={cat} style={{ marginBottom: 8 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>{cat}</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {items.map((it) => (
-                      <button key={it.id} onClick={() => insertNodeFromPalette(it)} style={{ textAlign: 'left', padding: '6px 8px', borderRadius: 6 }}>
-                        {it.title}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))
-            )
-          })()}
-        </div>
-      )}
+      <NodesListPanel
+        open={paletteOpen}
+        search={paletteSearch}
+        onSearch={(s) => setPaletteSearch(s)}
+        onClose={() => setPaletteOpen(false)}
+        nodeRegistry={nodeRegistry as any}
+        onInsert={(n: any) => insertNodeFromPalette(n)}
+      />
 
       {selectionRect && (
         <div style={{ position: 'absolute', left: selectionRect.x, top: selectionRect.y, width: selectionRect.w, height: selectionRect.h, border: '1px dashed rgba(0,0,0,0.6)', background: 'rgba(37,99,235,0.08)', pointerEvents: 'none', zIndex: 60 }} />
@@ -765,16 +732,8 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
         <span>X: {cursorBoard ? Math.round(cursorBoard.x) : 0}</span>
         <span>Y: {cursorBoard ? Math.round(cursorBoard.y) : 0}</span>
       </div>
-      {
-        selectedIds.length > 0 && (
-                <div className="absolute top-4 left-4 z-50 rounded-md px-3 py-2 text-sm flex gap-2 items-center bg-main-view-fg/6 text-main-view-fg">
-            <div style={{ marginLeft: 6, display: 'flex', gap: 8, alignItems: 'center' }}>
-            <span style={{ fontSize: 12 }}>{selectedIds.length} selected</span>
-            <button onClick={() => setSelectedIds([])} style={{ padding: '6px 8px' }} title="Clear selection">Clear</button>
-            </div>
-        </div>
-        )
-    }
+      
+    
     </div>
         
             
