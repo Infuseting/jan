@@ -1,0 +1,43 @@
+{
+    "listTitle": "Your Builder Agents",
+    "addAgent": "Create Agent",
+    "searchAgents": "Search agents...",
+    "noAgentsYet": "No builder agents yet",
+    "noAgentsYetDesc": "Create your first agent to get started.",
+    "noAgentsFound": "No agents found",
+    "tryDifferentSearch": "Try a different search query.",
+    "updated": "Updated",
+    "thread": "thread",
+    "threads": "threads",
+    "collapseAgent": "Collapse agent",
+    "expandAgent": "Expand agent",
+    "editAgent": "Edit agent",
+    "deleteAgent": "Delete agent",
+    "title": "Builder Agent",
+
+    "addAgentDialog": {
+        "alreadyExists": "An agent named \"{{agentName}}\" already exists.",
+        "renameSuccess": "Renamed agent from \"{{oldName}}\" to \"{{newName}}\".",
+        "createSuccess": "Created agent \"{{agentName}}\".",
+        "editTitle": "Edit agent",
+        "createTitle": "Create a new agent",
+        "nameLabel": "Agent name",
+        "namePlaceholder": "Enter agent name",
+        "updateButton": "Update",
+        "createButton": "Create"
+    },
+
+    "deleteAgentDialog": {
+        "title": "Delete agent",
+        "starredWarning": "Some threads in this agent are starred. Deleting will permanently remove them.",
+        "permanentDeleteWarning": "This action cannot be undone.",
+        "permanentDelete": "This will permanently delete all threads under this agent.",
+        "deleteEmptyAgent": "Delete the agent \"{{agentName}}\"?",
+        "saveThreadsAdvice": "If you want to keep any threads, export or move them before deleting.",
+        "successWithName": "Deleted agent \"{{agentName}}\" and its threads.",
+        "successWithoutName": "Deleted agent successfully.",
+        "error": "Failed to delete agent. Please try again.",
+        "ariaLabel": "Delete agent \"{{agentName}}\"",
+        "deleteButton": "Delete"
+    }
+}

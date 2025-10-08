@@ -135,6 +135,7 @@
   "enterApiKey": "Enter API Key",
   "scrollToBottom": "Scroll to bottom",
   "generateAiResponse": "Generate AI Response",
+  "builder": "Agent Builder",
   "addModel": {
     "title": "Add Model",
     "modelId": "Model ID",

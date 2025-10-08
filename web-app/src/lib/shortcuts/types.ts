@@ -7,6 +7,7 @@ export enum ShortcutAction {
   NEW_CHAT = 'newChat',
   TOGGLE_SIDEBAR = 'toggleSidebar',
   GO_TO_SETTINGS = 'goSettings',
+  OPEN_BUILDER = 'openBuilder',
   ZOOM_IN = 'zoomIn',
   ZOOM_OUT = 'zoomOut',
 }

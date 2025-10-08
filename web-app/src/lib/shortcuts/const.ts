@@ -18,6 +18,11 @@ export const PlatformShortcuts: ShortcutMap = {
     usePlatformMetaKey: true,
   },
 
+  // Open builder list - use Mod+K (Cmd+K on Mac / Ctrl+K on other platforms)
+  [ShortcutAction.OPEN_BUILDER]: PlatformFeatures[PlatformFeature.ALTERNATE_SHORTCUT_BINDINGS]
+    ? { key: 'k', usePlatformMetaKey: true }
+    : { key: 'k', usePlatformMetaKey: true },
+
   // New chat - different per platform to avoid browser "new window" conflict
   [ShortcutAction.NEW_CHAT]: PlatformFeatures[PlatformFeature.ALTERNATE_SHORTCUT_BINDINGS]
     ? { key: 'Enter', usePlatformMetaKey: true }

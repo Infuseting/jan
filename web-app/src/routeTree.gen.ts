@@ -17,6 +17,7 @@ import { Route as AssistantImport } from './routes/assistant'
 import { Route as IndexImport } from './routes/index'
 import { Route as ProjectIndexImport } from './routes/project/index'
 import { Route as HubIndexImport } from './routes/hub/index'
+import { Route as BuilderIndexImport } from './routes/builder/index'
 import { Route as ThreadsThreadIdImport } from './routes/threads/$threadId'
 import { Route as SettingsShortcutsImport } from './routes/settings/shortcuts'
 import { Route as SettingsPrivacyImport } from './routes/settings/privacy'
@@ -30,6 +31,7 @@ import { Route as SettingsAppearanceImport } from './routes/settings/appearance'
 import { Route as ProjectProjectIdImport } from './routes/project/$projectId'
 import { Route as LocalApiServerLogsImport } from './routes/local-api-server/logs'
 import { Route as HubModelIdImport } from './routes/hub/$modelId'
+import { Route as BuilderBuilderIdImport } from './routes/builder/$builderId'
 import { Route as SettingsProvidersIndexImport } from './routes/settings/providers/index'
 import { Route as SettingsProvidersProviderNameImport } from './routes/settings/providers/$providerName'
 import { Route as AuthGoogleCallbackImport } from './routes/auth.google.callback'
@@ -69,6 +71,12 @@ const ProjectIndexRoute = ProjectIndexImport.update({
 const HubIndexRoute = HubIndexImport.update({
   id: '/hub/',
   path: '/hub/',
+  getParentRoute: () => rootRoute,
+} as any)
+
+const BuilderIndexRoute = BuilderIndexImport.update({
+  id: '/builder/',
+  path: '/builder/',
   getParentRoute: () => rootRoute,
 } as any)
 
@@ -150,6 +158,12 @@ const HubModelIdRoute = HubModelIdImport.update({
   getParentRoute: () => rootRoute,
 } as any)
 
+const BuilderBuilderIdRoute = BuilderBuilderIdImport.update({
+  id: '/builder/$builderId',
+  path: '/builder/$builderId',
+  getParentRoute: () => rootRoute,
+} as any)
+
 const SettingsProvidersIndexRoute = SettingsProvidersIndexImport.update({
   id: '/settings/providers/',
   path: '/settings/providers/',
@@ -199,6 +213,13 @@ declare module '@tanstack/react-router' {
       path: '/system-monitor'
       fullPath: '/system-monitor'
       preLoaderRoute: typeof SystemMonitorImport
+      parentRoute: typeof rootRoute
+    }
+    '/builder/$builderId': {
+      id: '/builder/$builderId'
+      path: '/builder/$builderId'
+      fullPath: '/builder/$builderId'
+      preLoaderRoute: typeof BuilderBuilderIdImport
       parentRoute: typeof rootRoute
     }
     '/hub/$modelId': {
@@ -292,6 +313,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ThreadsThreadIdImport
       parentRoute: typeof rootRoute
     }
+    '/builder/': {
+      id: '/builder/'
+      path: '/builder'
+      fullPath: '/builder'
+      preLoaderRoute: typeof BuilderIndexImport
+      parentRoute: typeof rootRoute
+    }
     '/hub/': {
       id: '/hub/'
       path: '/hub'
@@ -337,6 +365,7 @@ export interface FileRoutesByFullPath {
   '/assistant': typeof AssistantRoute
   '/logs': typeof LogsRoute
   '/system-monitor': typeof SystemMonitorRoute
+  '/builder/$builderId': typeof BuilderBuilderIdRoute
   '/hub/$modelId': typeof HubModelIdRoute
   '/local-api-server/logs': typeof LocalApiServerLogsRoute
   '/project/$projectId': typeof ProjectProjectIdRoute
@@ -350,6 +379,7 @@ export interface FileRoutesByFullPath {
   '/settings/privacy': typeof SettingsPrivacyRoute
   '/settings/shortcuts': typeof SettingsShortcutsRoute
   '/threads/$threadId': typeof ThreadsThreadIdRoute
+  '/builder': typeof BuilderIndexRoute
   '/hub': typeof HubIndexRoute
   '/project': typeof ProjectIndexRoute
   '/auth/google/callback': typeof AuthGoogleCallbackRoute
@@ -362,6 +392,7 @@ export interface FileRoutesByTo {
   '/assistant': typeof AssistantRoute
   '/logs': typeof LogsRoute
   '/system-monitor': typeof SystemMonitorRoute
+  '/builder/$builderId': typeof BuilderBuilderIdRoute
   '/hub/$modelId': typeof HubModelIdRoute
   '/local-api-server/logs': typeof LocalApiServerLogsRoute
   '/project/$projectId': typeof ProjectProjectIdRoute
@@ -375,6 +406,7 @@ export interface FileRoutesByTo {
   '/settings/privacy': typeof SettingsPrivacyRoute
   '/settings/shortcuts': typeof SettingsShortcutsRoute
   '/threads/$threadId': typeof ThreadsThreadIdRoute
+  '/builder': typeof BuilderIndexRoute
   '/hub': typeof HubIndexRoute
   '/project': typeof ProjectIndexRoute
   '/auth/google/callback': typeof AuthGoogleCallbackRoute
@@ -388,6 +420,7 @@ export interface FileRoutesById {
   '/assistant': typeof AssistantRoute
   '/logs': typeof LogsRoute
   '/system-monitor': typeof SystemMonitorRoute
+  '/builder/$builderId': typeof BuilderBuilderIdRoute
   '/hub/$modelId': typeof HubModelIdRoute
   '/local-api-server/logs': typeof LocalApiServerLogsRoute
   '/project/$projectId': typeof ProjectProjectIdRoute
@@ -401,6 +434,7 @@ export interface FileRoutesById {
   '/settings/privacy': typeof SettingsPrivacyRoute
   '/settings/shortcuts': typeof SettingsShortcutsRoute
   '/threads/$threadId': typeof ThreadsThreadIdRoute
+  '/builder/': typeof BuilderIndexRoute
   '/hub/': typeof HubIndexRoute
   '/project/': typeof ProjectIndexRoute
   '/auth/google/callback': typeof AuthGoogleCallbackRoute
@@ -415,6 +449,7 @@ export interface FileRouteTypes {
     | '/assistant'
     | '/logs'
     | '/system-monitor'
+    | '/builder/$builderId'
     | '/hub/$modelId'
     | '/local-api-server/logs'
     | '/project/$projectId'
@@ -428,6 +463,7 @@ export interface FileRouteTypes {
     | '/settings/privacy'
     | '/settings/shortcuts'
     | '/threads/$threadId'
+    | '/builder'
     | '/hub'
     | '/project'
     | '/auth/google/callback'
@@ -439,6 +475,7 @@ export interface FileRouteTypes {
     | '/assistant'
     | '/logs'
     | '/system-monitor'
+    | '/builder/$builderId'
     | '/hub/$modelId'
     | '/local-api-server/logs'
     | '/project/$projectId'
@@ -452,6 +489,7 @@ export interface FileRouteTypes {
     | '/settings/privacy'
     | '/settings/shortcuts'
     | '/threads/$threadId'
+    | '/builder'
     | '/hub'
     | '/project'
     | '/auth/google/callback'
@@ -463,6 +501,7 @@ export interface FileRouteTypes {
     | '/assistant'
     | '/logs'
     | '/system-monitor'
+    | '/builder/$builderId'
     | '/hub/$modelId'
     | '/local-api-server/logs'
     | '/project/$projectId'
@@ -476,6 +515,7 @@ export interface FileRouteTypes {
     | '/settings/privacy'
     | '/settings/shortcuts'
     | '/threads/$threadId'
+    | '/builder/'
     | '/hub/'
     | '/project/'
     | '/auth/google/callback'
@@ -489,6 +529,7 @@ export interface RootRouteChildren {
   AssistantRoute: typeof AssistantRoute
   LogsRoute: typeof LogsRoute
   SystemMonitorRoute: typeof SystemMonitorRoute
+  BuilderBuilderIdRoute: typeof BuilderBuilderIdRoute
   HubModelIdRoute: typeof HubModelIdRoute
   LocalApiServerLogsRoute: typeof LocalApiServerLogsRoute
   ProjectProjectIdRoute: typeof ProjectProjectIdRoute
@@ -502,6 +543,7 @@ export interface RootRouteChildren {
   SettingsPrivacyRoute: typeof SettingsPrivacyRoute
   SettingsShortcutsRoute: typeof SettingsShortcutsRoute
   ThreadsThreadIdRoute: typeof ThreadsThreadIdRoute
+  BuilderIndexRoute: typeof BuilderIndexRoute
   HubIndexRoute: typeof HubIndexRoute
   ProjectIndexRoute: typeof ProjectIndexRoute
   AuthGoogleCallbackRoute: typeof AuthGoogleCallbackRoute
@@ -514,6 +556,7 @@ const rootRouteChildren: RootRouteChildren = {
   AssistantRoute: AssistantRoute,
   LogsRoute: LogsRoute,
   SystemMonitorRoute: SystemMonitorRoute,
+  BuilderBuilderIdRoute: BuilderBuilderIdRoute,
   HubModelIdRoute: HubModelIdRoute,
   LocalApiServerLogsRoute: LocalApiServerLogsRoute,
   ProjectProjectIdRoute: ProjectProjectIdRoute,
@@ -527,6 +570,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsPrivacyRoute: SettingsPrivacyRoute,
   SettingsShortcutsRoute: SettingsShortcutsRoute,
   ThreadsThreadIdRoute: ThreadsThreadIdRoute,
+  BuilderIndexRoute: BuilderIndexRoute,
   HubIndexRoute: HubIndexRoute,
   ProjectIndexRoute: ProjectIndexRoute,
   AuthGoogleCallbackRoute: AuthGoogleCallbackRoute,
@@ -548,6 +592,7 @@ export const routeTree = rootRoute
         "/assistant",
         "/logs",
         "/system-monitor",
+        "/builder/$builderId",
         "/hub/$modelId",
         "/local-api-server/logs",
         "/project/$projectId",
@@ -561,6 +606,7 @@ export const routeTree = rootRoute
         "/settings/privacy",
         "/settings/shortcuts",
         "/threads/$threadId",
+        "/builder/",
         "/hub/",
         "/project/",
         "/auth/google/callback",
@@ -579,6 +625,9 @@ export const routeTree = rootRoute
     },
     "/system-monitor": {
       "filePath": "system-monitor.tsx"
+    },
+    "/builder/$builderId": {
+      "filePath": "builder/$builderId.tsx"
     },
     "/hub/$modelId": {
       "filePath": "hub/$modelId.tsx"
@@ -618,6 +667,9 @@ export const routeTree = rootRoute
     },
     "/threads/$threadId": {
       "filePath": "threads/$threadId.tsx"
+    },
+    "/builder/": {
+      "filePath": "builder/index.tsx"
     },
     "/hub/": {
       "filePath": "hub/index.tsx"

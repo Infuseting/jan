@@ -76,7 +76,9 @@
     "shiftEnter": "Shift + Enter",
     "navigation": "Navigation",
     "goToSettings": "Go to Settings",
-    "goToSettingsDesc": "Open settings."
+    "goToSettingsDesc": "Open settings.",
+    "openBuilder": "Open Agent Builder",
+    "openBuilderDesc": "Open the Agent Builder screen."
   },
   "appearance": {
     "title": "Appearance",

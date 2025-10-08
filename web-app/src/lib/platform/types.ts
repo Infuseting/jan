@@ -68,7 +68,8 @@ export enum PlatformFeature {
 
   // First message persisted thread - web-only feature for storing first user message locally during thread creation
   FIRST_MESSAGE_PERSISTED_THREAD = 'firstMessagePersistedThread',
-
+  // Agent builder - feature for creating and managing custom AI agents/workflows
+  BUILDER = 'agentBuilder',
   // Temporary chat mode - web-only feature for ephemeral conversations like ChatGPT
   TEMPORARY_CHAT = 'temporaryChat',
 }

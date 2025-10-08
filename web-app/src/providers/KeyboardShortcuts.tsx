@@ -12,6 +12,7 @@ export function KeyboardShortcutsProvider() {
   const sidebarShortcut = PlatformShortcuts[ShortcutAction.TOGGLE_SIDEBAR]
   const newChatShortcut = PlatformShortcuts[ShortcutAction.NEW_CHAT]
   const settingsShortcut = PlatformShortcuts[ShortcutAction.GO_TO_SETTINGS]
+  const openBuilderShortcut = PlatformShortcuts[ShortcutAction.OPEN_BUILDER]
 
   // Toggle Sidebar
   useKeyboardShortcut({
@@ -35,6 +36,14 @@ export function KeyboardShortcutsProvider() {
     ...settingsShortcut,
     callback: () => {
       router.navigate({ to: route.settings.general })
+    },
+  })
+
+  // Open Builder
+  useKeyboardShortcut({
+    ...openBuilderShortcut,
+    callback: () => {
+      router.navigate({ to: route.builder.index })
     },
   })
 

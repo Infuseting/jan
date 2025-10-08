@@ -80,4 +80,6 @@ export const PlatformFeatures: Record<PlatformFeature, boolean> = {
 
     // Temporary chat mode - enabled for web only
   [PlatformFeature.TEMPORARY_CHAT]: !isPlatformTauri(),
+
+  [PlatformFeature.BUILDER]: isPlatformTauri(),
 }

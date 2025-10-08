@@ -16,6 +16,7 @@ import {
   IconFolder,
   IconPencil,
   IconTrash,
+  IconWall,
 } from '@tabler/icons-react'
 import { route } from '@/constants/routes'
 import ThreadList from './ThreadList'
@@ -62,6 +63,12 @@ const mainMenus = [
 
 const secondaryMenus = [
   {
+    title: 'common:builder',
+    icon: IconWall,
+    route: route.builder.index,
+    isEnabled: PlatformFeatures[PlatformFeature.BUILDER],
+  },
+  {
     title: 'common:assistants',
     icon: IconClipboardSmile,
     route: route.assistant,
@@ -80,6 +87,7 @@ const secondaryMenus = [
     isEnabled: true,
   },
 ]
+
 
 const LeftPanel = () => {
   const open = useLeftPanel((state) => state.open)
