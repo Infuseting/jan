@@ -45,10 +45,10 @@ export default function NodeConfigDialog({ open, onOpenChange, nodeId, meta, onS
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{nodeId ? `${nodeId} configuration` : 'Node configuration'}</DialogTitle>
+          <DialogTitle>Node configuration</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-3">
+        <div className="space-y-3 overflow-auto">
           {typeof children === 'function' ? (children as any)(localMeta || {}, (m: Record<string, any>) => setLocalMeta(m)) : (
             children ? children : (
               <div>

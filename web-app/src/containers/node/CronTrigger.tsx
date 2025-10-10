@@ -1,6 +1,7 @@
 import NodeBase from '@/containers/NodeBase'
 import { useState, useEffect } from 'react'
 import { IconClock } from '@tabler/icons-react'
+import { NodeType } from '@/lib/node'
 
 function encodeCronForUrl(cron: string) {
   // crontab.guru expects spaces replaced by underscores in the fragment, but
@@ -8,7 +9,7 @@ function encodeCronForUrl(cron: string) {
   return encodeURIComponent(cron.replace(/\s+/g, '_'))
 }
 
-export default function CronTrigger({ id, meta, selected }: { id: string; meta?: Record<string, any>; onMetaChange?: (m: Record<string, any>) => void; selected?: boolean }) {
+export default function Node({ id, meta, selected, activePortId, activePortKind }: { id: string; meta?: Record<string, any>; onMetaChange?: (m: Record<string, any>) => void; selected?: boolean; activePortId?: string | null; activePortKind?: 'input' | 'output' | null }) {
   const initial = (meta && meta.cron) || '0 * * * *'
   const [cron, setCron] = useState<string>(initial)
 
@@ -19,10 +20,10 @@ export default function CronTrigger({ id, meta, selected }: { id: string; meta?:
   }, [meta?.cron])
 
   return (
-    <NodeBase id={id} selected={selected} title="Cron Trigger" inputs={[]} outputs={[{ id: 'out', label: 'Trigger' }]} />
+    <NodeBase id={id} selected={selected} title="Cron Trigger" inputs={[]} outputs={[{ id: 'out', label: 'Trigger' }]} activePortId={activePortId} activePortKind={activePortKind} />
   )
 }
-export function CronTriggerConfig({ meta, setMeta }: { meta?: Record<string, any>; setMeta: (m: Record<string, any>) => void }) {
+export function NodeConfig({ meta, setMeta }: { meta?: Record<string, any>; setMeta: (m: Record<string, any>) => void }) {
   const current = (meta && meta.cron) || ''
   const [local, setLocal] = useState<string>(current)
   useEffect(() => {
@@ -49,13 +50,16 @@ export function CronTriggerConfig({ meta, setMeta }: { meta?: Record<string, any
   )
 }
 
-export const nodeEntry = {
-  id: 'cron',
-  title: 'Cron Trigger',
-  type: 'note' as const,
-  category: 'Trigger',
-  component: CronTrigger,
-  config: CronTriggerConfig,
-  defaultMeta: { cron: '0 * * * *' },
-  display: { Icon: IconClock, title: 'Cron Trigger', description: 'Trigger on a cron schedule' },
+export function getNodeEntry() {
+  return {
+    id: 'cron',
+    title: 'Cron Trigger',
+    nodeType: NodeType.Trigger,
+    type: 'note' as const,
+    category: 'Trigger',
+    component: Node,
+    config: NodeConfig,
+    defaultMeta: { cron: '0 * * * *' },
+    display: { Icon: IconClock, title: 'Cron Trigger', description: 'Trigger on a cron schedule' },
+  }
 }

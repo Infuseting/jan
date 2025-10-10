@@ -1,9 +1,12 @@
-import { nodeEntry as ifNodeEntry } from './IfNode'
-import { nodeEntry as whileNodeEntry } from './WhileNode'
-import { nodeEntry as forNodeEntry } from './ForNode'
-import { nodeEntry as cronNodeEntry } from './CronTrigger'
-import { nodeEntry as threadMessageNodeEntry } from './ThreadMessageTrigger'
+import { getNodeEntry as getIfNodeEntry } from './IfNode'
+import { getNodeEntry as getWhileNodeEntry } from './WhileNode'
+import { getNodeEntry as getForNodeEntry } from './ForNode'
+import { getNodeEntry as getCronNodeEntry } from './CronTrigger'
+import { getNodeEntry as getThreadMessageNodeEntry } from './ThreadMessageTrigger'
+import { getNodeEntry as getManualNodeEntry } from './ManualTrigger'
+import { getNodeEntry as getHttpRequestNodeEntry } from './HttpRequestNode'
 import React from 'react'
+import { NodeType } from '@/lib/node'
 
 // default fallbacks
 export const DefaultNode: React.FC<{ id: string; meta?: Record<string, any>; selected?: boolean; onMetaChange?: (m: Record<string, any>) => void }> = ({ id, selected }) => {
@@ -29,6 +32,8 @@ export const DefaultConfig: React.FC<{ meta?: Record<string, any>; setMeta: (m: 
 export type NodeEntry = {
   id: string
   title: string
+  // nodeType indicates whether this is a trigger or a regular node
+  nodeType: NodeType
   type: 'note' | 'shape' | 'other'
   category?: string
   component: React.ComponentType<any>
@@ -40,11 +45,21 @@ export type NodeEntry = {
     title?: string
     description?: string
   }
+  // optional executor for preview/publish: (input, meta, context) => any | Promise<any>
+  execute?: (input: any, meta?: Record<string, any>, context?: Record<string, any>) => any | Promise<any>
 }
 
 // Build registry from node-local entries. This keeps node metadata colocated with the node implementation.
-// the per-node files now export a full `nodeEntry` (including component & config)
-const registry: NodeEntry[] = [ifNodeEntry, whileNodeEntry, forNodeEntry, cronNodeEntry, threadMessageNodeEntry]
+// assemble registry by calling each node's factory which keeps component and config inside the node file
+const registry: NodeEntry[] = [
+  getIfNodeEntry(),
+  getWhileNodeEntry(),
+  getForNodeEntry(),
+  getCronNodeEntry(),
+  getThreadMessageNodeEntry(),
+  getManualNodeEntry(),
+  getHttpRequestNodeEntry(),
+]
 
 export const nodeRegistry = registry
 
@@ -58,6 +73,7 @@ export function getNodeComponent(id: string) {
 
 export function getNodeConfig(id: string) {
   const e = nodeMap[id]
+  if (e && e.config === null) return null
   return e && e.config ? e.config : DefaultConfig
 }
 

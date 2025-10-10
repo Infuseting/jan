@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { nodeRegistry as centralNodeRegistry, getNodeComponent, getNodeConfig } from '@/containers/node/nodeRegistry'
+import { NodeType } from '@/lib/node'
+import { runExecutorForElement, runAndPropagate, onStart as onExecStart, onFinish as onExecFinish, onError as onExecError, onCancel as onExecCancel } from '@/lib/nodeExecution'
 import NodeConfigDialog from '@/containers/dialogs/NodeConfigDialog'
 import NodesListPanel from '@/containers/NodesListPanel'
-import { IconCursorOff, IconCursorText, IconHandGrab, IconMouse, IconPoint, IconPointer, IconPointerBolt, IconPointerCheck, IconPointerX, IconSelect } from '@tabler/icons-react';
+import { IconHandGrab, IconPlayerPlay, IconPointer } from '@tabler/icons-react';
 // configs are provided by the node registry (nodeMap -> config)
 
 type WhiteboardProps = { minScale?: number; maxScale?: number; initialScale?: number }
@@ -19,6 +21,35 @@ type WBElement = { id: string; type: WBElementType; x: number; y: number; meta?:
 export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale = 1, ...rest }: WhiteboardProps & { builderId?: string; initialBoard?: BoardSnapshot | null; onRequestSave?: (s: BoardSnapshot) => void }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
 
+  // Inject styles for node states (running / success / error). Prefer moving these to a global stylesheet.
+  useEffect(() => {
+    const id = 'wb-node-state-styles'
+    if (document.getElementById(id)) return
+    const style = document.createElement('style')
+    style.id = id
+    style.innerHTML = `
+      .node-wrapper { position: absolute; display: inline-block }
+      .node--selected { box-shadow: 0 0 0 2px rgba(99,102,241,0.12) inset }
+      /* when a port is selected for connection, highlight node with green border */
+      .node--port-selected { box-shadow: 0 0 0 2px rgba(16,185,129,0.9) inset }
+      .node--success { box-shadow: 0 0 0 2px rgba(16,185,129,0.6) inset }
+      .node--error { box-shadow: 0 0 0 2px rgba(239,68,68,0.7) inset }
+      .node--running { position: relative; }
+      .node--running::after {
+        content: '';
+        position: absolute;
+        inset: -6px;
+        border-radius: 10px;
+        background: conic-gradient(rgba(255,255,255,0.9), rgba(255,255,255,0.25) 40%, transparent 120deg);
+        pointer-events: none;
+        animation: wb-run-spin 1s linear infinite;
+        mix-blend-mode: overlay;
+      }
+      @keyframes wb-run-spin { to { transform: rotate(360deg) } }
+    `
+    document.head.appendChild(style)
+  }, [])
+
   const [scale, setScale] = useState<number>(initialScale)
   const [translate, setTranslate] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
 
@@ -29,6 +60,7 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
   const [cursorBoard, setCursorBoard] = useState<{ x: number; y: number } | null>(null)
 
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [runningId, setRunningId] = useState<string | null>(null)
 
   // active tool for the board (default: pointer)
   const [activeTool, setActiveTool] = useState<'pointer' | 'hand' | 'select' | 'text'>('pointer')
@@ -70,7 +102,21 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
     const ib = (rest as any).initialBoard as BoardSnapshot | undefined | null
     if (!ib) return
     setElements(ib.elements || [])
-    setConnections(ib.connections || [])
+    // sanitize connections: ensure a given output (from.nodeId+from.portId) appears at most once
+    try {
+      const raw = ib.connections || []
+      const seen = new Set<string>()
+      const sanitized: typeof raw = []
+      for (const c of raw) {
+        const key = `${c.from.nodeId}::${c.from.portId}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        sanitized.push(c)
+      }
+      setConnections(sanitized)
+    } catch {
+      setConnections(ib.connections || [])
+    }
     setScale(ib.scale || initialScale)
     setTranslate(ib.translate || { x: 0, y: 0 })
     // clear history on load
@@ -90,7 +136,7 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
     return () => clearTimeout(handle)
   }, [elements, connections, scale, translate, (rest as any).onRequestSave])
   const historyRef = useRef<{ stack: WBElement[][] }>({ stack: [] })
-  const clipboardRef = useRef<WBElement[] | null>(null)
+  const clipboardRef = useRef<{ elements: WBElement[]; connections: Array<{ from: { nodeId: string; portId: string }; to: { nodeId: string; portId: string } }> } | null>(null)
 
   const pushHistory = () => {
     try {
@@ -126,14 +172,11 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
       const factor = Math.exp(-e.deltaY * 0.0015)
       setScale((prev) => {
         const newScaleRaw = clamp(prev * factor, minScale, maxScale)
+        if (Math.abs(newScaleRaw - prev) < 1e-12) return prev
         const newScale = Number(newScaleRaw.toFixed(6))
-        setTranslate((t) => {
-          const bx = (mouseX - t.x) / prev
-          const by = (mouseY - t.y) / prev
-          const nx = mouseX - bx * newScale
-          const ny = mouseY - by * newScale
-          return { x: nx, y: ny }
-        })
+        const dx = mouseX - (mouseX - translate.x) * (newScale / prev)
+        const dy = mouseY - (mouseY - translate.y) * (newScale / prev)
+        setTranslate({ x: dx, y: dy })
         return newScale
       })
     }
@@ -312,8 +355,13 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
           if (nodeId && portId && portKind === 'input') {
             const cur = connectingRef.current
             if (cur) {
-              pushHistory()
-              setConnections((c) => [...c, { from: { nodeId: cur.fromNode, portId: cur.fromPort }, to: { nodeId, portId } }])
+              // enforce: one output (fromNode+fromPort) can connect to only one input
+              setConnections((existing) => {
+                const already = existing.some((cn) => cn.from.nodeId === cur.fromNode && cn.from.portId === cur.fromPort)
+                if (already) return existing
+                pushHistory()
+                return [...existing, { from: { nodeId: cur.fromNode, portId: cur.fromPort }, to: { nodeId, portId } }]
+              })
             }
           }
         } catch {}
@@ -411,6 +459,66 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
   // use the centralized registry
   const nodeRegistry = centralNodeRegistry
 
+  // If a node is selected for config but that node declares `config === null`, close the dialog immediately.
+  useEffect(() => {
+    if (!configNodeId) return
+    try {
+      const el = elements.find((e) => e.id === configNodeId)
+      const nodeId = el ? (el.meta as any)?._nodeId : null
+      if (!nodeId) return
+      const cfg = getNodeConfig(nodeId)
+      if (cfg === null) {
+        // close dialog since node has no configurable UI
+        setConfigNodeId(null)
+      }
+    } catch {}
+  }, [configNodeId, elements])
+
+  // Subscribe to execution lifecycle events to update UI running state
+  useEffect(() => {
+    const offStart = onExecStart(({ elementId }) => {
+      setRunningId(elementId)
+      try { updateElementMeta(elementId, { ...(elements.find(e => e.id === elementId)?.meta || {}), lastRunStatus: 'running', lastRunAt: Date.now() }) } catch {}
+    })
+    const offFinish = onExecFinish(({ elementId, result }) => {
+      setRunningId(null)
+      try {
+        // persist success and also mark active port if provided by executor result
+        updateElementMeta(elementId, { ...(elements.find(e => e.id === elementId)?.meta || {}), lastRunStatus: 'success', lastRunAt: Date.now(), lastRunResult: result })
+        try {
+          const portId = (result && typeof result === 'object' && 'portId' in result) ? result.portId : undefined
+          if (portId) {
+            // mark the element's output port as active
+            updateElementMeta(elementId, { ...(elements.find(e => e.id === elementId)?.meta || {}), activePortId: portId, activePortKind: 'output' })
+            // find downstream connection target and mark its input port active briefly as well
+            const outs = connections.filter((c) => c.from.nodeId === elementId && c.from.portId === portId)
+            if (outs.length > 0) {
+              const tgt = outs[0].to
+              updateElementMeta(tgt.nodeId, { ...(elements.find(e => e.id === tgt.nodeId)?.meta || {}), activePortId: tgt.portId, activePortKind: 'input' })
+              // clear target's active port after a short delay
+              setTimeout(() => {
+                try { updateElementMeta(tgt.nodeId, { ...(elements.find(e => e.id === tgt.nodeId)?.meta || {}), activePortId: null, activePortKind: null }) } catch {}
+              }, 1200)
+            }
+            // clear source active port after short delay
+            setTimeout(() => {
+              try { updateElementMeta(elementId, { ...(elements.find(e => e.id === elementId)?.meta || {}), activePortId: null, activePortKind: null }) } catch {}
+            }, 1200)
+          }
+        } catch {}
+      } catch {}
+    })
+    const offErr = onExecError(({ elementId, error }) => {
+      setRunningId(null)
+      try { updateElementMeta(elementId, { ...(elements.find(e => e.id === elementId)?.meta || {}), lastRunStatus: 'error', lastRunAt: Date.now(), lastRunError: String(error || '') }) } catch {}
+    })
+    const offCancel = onExecCancel(({ elementId }) => {
+      setRunningId(null)
+      try { updateElementMeta(elementId, { ...(elements.find(e => e.id === elementId)?.meta || {}), lastRunStatus: 'cancelled', lastRunAt: Date.now() }) } catch {}
+    })
+    return () => { offStart(); offFinish(); offErr(); offCancel() }
+  }, [])
+
   const openPaletteAt = (boardPos: { x: number; y: number }) => {
     if (activeTool === 'hand') return
     setPaletteClickBoard(boardPos)
@@ -460,19 +568,44 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
   const copySelected = () => {
     if (selectedIds.length === 0) return
     const copied = elements.filter((it) => selectedIds.includes(it.id)).map((e) => ({ ...e }))
-    clipboardRef.current = copied
+    
+    const copiedConns = connections.filter((c) => selectedIds.includes(c.from.nodeId) && selectedIds.includes(c.to.nodeId)).map((c) => ({ ...c }))
+    clipboardRef.current = { elements: copied, connections: copiedConns }
   }
 
   // paste clipboard (offset slightly)
   const pasteClipboard = () => {
     const clip = clipboardRef.current
-    if (!clip || clip.length === 0) return
+    if (!clip || !clip.elements || clip.elements.length === 0) return
     pushHistory()
     const offset = 16 / Math.max(0.1, scale)
     const base = cursorBoard || { x: 0, y: 0 }
-  const pasted: WBElement[] = clip.map((c) => ({ id: uid(), type: c.type, x: base.x + (c.x - clip[0].x) + offset, y: base.y + (c.y - clip[0].y) + offset, meta: c.meta ? { ...c.meta } : undefined }))
+    // generate new ids and keep mapping from old -> new
+    const mapping: Record<string, string> = {}
+    const first = clip.elements[0]
+    const pasted: WBElement[] = clip.elements.map((c) => {
+      const newid = uid()
+      mapping[c.id] = newid
+      return { id: newid, type: c.type, x: base.x + (c.x - first.x) + offset, y: base.y + (c.y - first.y) + offset, meta: c.meta ? { ...c.meta } : undefined }
+    })
     setElements((arr) => [...arr, ...pasted])
     setSelectedIds(pasted.map((p) => p.id))
+    // remap and add copied connections (if any)
+    if (clip.connections && clip.connections.length > 0) {
+      const remapped = clip.connections.map((c) => ({ from: { nodeId: mapping[c.from.nodeId], portId: c.from.portId }, to: { nodeId: mapping[c.to.nodeId], portId: c.to.portId } }))
+      // filter out any incomplete mappings (just in case)
+      const valid = remapped.filter((r) => r.from.nodeId && r.to.nodeId)
+      if (valid.length > 0) {
+        // filter out any connections whose 'from' (output) is already present
+        setConnections((arr) => {
+          const existingFroms = new Set(arr.map((c) => `${c.from.nodeId}::${c.from.portId}`))
+          const toAdd = valid.filter((r) => !existingFroms.has(`${r.from.nodeId}::${r.from.portId}`))
+          if (toAdd.length === 0) return arr
+          pushHistory()
+          return [...arr, ...toAdd]
+        })
+      }
+    }
   }
 
   // select all
@@ -544,41 +677,7 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
     >
       <div className="absolute inset-0" style={{ transform: `translate(${translate.x}px, ${translate.y}px) scale(${scale})`, transformOrigin: '0 0', willChange: 'transform' }}>
         <div style={{ position: 'relative', width: 100000, height: 100000 }}>
-          {/* connections SVG (render in board coordinates) */}
-          <svg style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
-            {connections.map((c, i) => {
-              // compute port centers
-              try {
-                const fromEl = document.querySelector(`[data-node-id=\"${c.from.nodeId}\"][data-port-id=\"${c.from.portId}\"]`) as HTMLElement | null
-                const toEl = document.querySelector(`[data-node-id=\"${c.to.nodeId}\"][data-port-id=\"${c.to.portId}\"]`) as HTMLElement | null
-                if (!fromEl || !toEl) return null
-                const crect = containerRef.current!.getBoundingClientRect()
-                const frect = fromEl.getBoundingClientRect()
-                const trect = toEl.getBoundingClientRect()
-                // convert screen to board coords
-                const fx = (frect.left + frect.width / 2 - crect.left - translate.x) / scale
-                const fy = (frect.top + frect.height / 2 - crect.top - translate.y) / scale
-                const tx = (trect.left + trect.width / 2 - crect.left - translate.x) / scale
-                const ty = (trect.top + trect.height / 2 - crect.top - translate.y) / scale
-                return <line key={i} x1={fx} y1={fy} x2={tx} y2={ty} stroke="#ffffff" strokeWidth={0.2} />
-              } catch { return null }
-            })}
-            {connectingRef.current && (() => {
-              try {
-                const cur = connectingRef.current
-                if (!cur) return null
-                const crect = containerRef.current!.getBoundingClientRect()
-                const fromEl = document.querySelector(`[data-node-id="${cur.fromNode}"][data-port-id="${cur.fromPort}"]`) as HTMLElement | null
-                if (!fromEl || !cur.toScreen) return null
-                const frect = fromEl.getBoundingClientRect()
-                const fx = (frect.left + frect.width / 2 - crect.left - translate.x) / scale
-                const fy = (frect.top + frect.height / 2 - crect.top - translate.y) / scale
-                const tx = (cur.toScreen.x - translate.x) / scale
-                const ty = (cur.toScreen.y - translate.y) / scale
-                return <line x1={fx} y1={fy} x2={tx} y2={ty} stroke="#0ea5e9" strokeDasharray="4 2" strokeWidth={0.02} />
-              } catch { return null }
-            })()}
-          </svg>
+          {/* node elements are rendered inside this transformed area */}
           {elements.map((el) => {
             const isSelected = selectedIds.includes(el.id)
             const nodeId = el.meta && (el.meta as any)._nodeId
@@ -604,71 +703,137 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
                 pointerDownRef.current = { id: el.id, time: Date.now(), startX: ev.clientX, startY: ev.clientY, selectionAtDown: newSelection, modifier }
                 ;(ev.currentTarget as Element).setPointerCapture?.(ev.pointerId)
               },
-              onDoubleClick: () => { if (activeTool === 'pointer') setConfigNodeId(el.id) },
+              onDoubleClick: () => { console.log(getNodeConfig(el.id)); if (activeTool === 'pointer' && getNodeConfig(el.id) !== null) setConfigNodeId(el.id) },
               style: {
                 position: 'absolute' as const, left: el.x, top: el.y, transform: 'translate(-50%, -50%)', pointerEvents: activeTool === 'hand' ? 'none' : 'auto', zIndex: isSelected ? 50 : undefined, cursor: activeTool === 'hand' ? 'default' : 'grab'
               }
             }
 
-            // dynamic node rendering via registry (with fallback)
             if (nodeId) {
               const Comp: any = getNodeComponent(nodeId)
+              const nodeEntry = nodeRegistry.find((n) => n.id === nodeId)
+              const lastStatus = (el.meta && (el.meta as any).lastRunStatus) || null
+              const isRunningEl = runningId === el.id
+              const isPortSelected = (() => {
+                try {
+                  const cur = connectingRef.current
+                  if (!cur) return false
+                  if (cur.fromNode === el.id) return true
+                  // if hovering over a target input we can detect by comparing cursorScreen -> element under cursor,
+                  // but simpler: if toScreen exists and the element is a possible target for the connection, leave false
+                  return false
+                } catch { return false }
+              })()
+
+              const hasActivePortMeta = !!((el.meta && (el.meta as any).activePortId) || (el.meta && (el.meta as any).activePortKind))
+              const wrapperClass = `node-wrapper ${isRunningEl ? 'node--running' : ''} ${(lastStatus === 'success' && hasActivePortMeta) ? 'node--success' : ''} ${lastStatus === 'error' ? 'node--error' : ''} ${isSelected ? 'node--selected' : ''} ${isPortSelected ? 'node--port-selected' : ''}`
+
               return (
-                <div key={el.id} {...commonProps as any}>
-                  <Comp id={el.id} meta={el.meta} selected={isSelected} onMetaChange={(m: any) => updateElementMeta(el.id, m)} />
+                <div key={el.id} className={wrapperClass} {...commonProps as any}>
+                  {/* Launch button for trigger nodes: positioned above the node with a small gap (~4px) */}
+                  {nodeEntry && nodeEntry.nodeType === NodeType.Trigger && (
+                    <button
+                      title="Run preview"
+                      onPointerDown={(ev) => { ev.stopPropagation(); ev.preventDefault(); }}
+                      onClick={async (ev) => {
+                        ev.stopPropagation()
+                        try {
+                          if (!nodeEntry || !nodeEntry.execute) {
+                            console.warn('No executor for node', nodeId)
+                            return
+                          }
+                          // delegate execution to centralized runtime and propagate to downstream nodes
+                              console.debug('[Whiteboard] run preview: element', el.id, 'connections', connections.filter((c) => c.from.nodeId === el.id))
+                              const res = await runAndPropagate(
+                            el.id,
+                            nodeEntry.id,
+                            nodeEntry.execute,
+                            undefined,
+                            el.meta || {},
+                            {},
+                            // getOutgoing: find connections that originate from this element
+                            (elId: string) => connections.filter((c) => c.from.nodeId === elId).map((c) => ({ fromPortId: c.from.portId, targetElementId: c.to.nodeId, targetPortId: c.to.portId })),
+                            // resolveTarget: find target element and its executor/meta
+                            (targetElementId: string) => {
+                              const tgt = elements.find((ee) => ee.id === targetElementId)
+                              if (!tgt) return null
+                              const nid = (tgt.meta as any)?._nodeId
+                              if (!nid) return null
+                              const entry = nodeRegistry.find((n) => n.id === nid)
+                              if (!entry || !entry.execute) return null
+                              return { executor: entry.execute, nodeId: entry.id, meta: tgt.meta }
+                            },
+                            // mapResultToInput: default to passing output as input to next node
+                            (resultOutput: any) => resultOutput
+                          )
+                          console.debug('[Whiteboard] run preview finished for', el.id, 'result', res)
+                        } catch (err) {
+                          console.error('Error running node preview', err)
+                        }
+                      }}
+                      style={{
+                        position: 'absolute',
+                        left: '50%',
+                        bottom: '100%',
+                        transform: 'translateX(-50%)',
+                        marginBottom: 4,
+                        zIndex: 80,
+                        padding: '4px 8px',
+                        fontSize: 12,
+                        borderRadius: 6,
+                        border: '1px solid rgba(0,0,0,0.1)',
+                        background: runningId === el.id ? 'rgba(14,165,233,0.12)' : 'rgba(255,255,255,0.04)',
+                        color: 'inherit',
+                        cursor: runningId === el.id ? 'wait' : 'pointer'
+                      }}
+                    >
+                      {runningId === el.id ? 'Running...' : <IconPlayerPlay />}
+                    </button>
+                  )}
+
+                  <Comp id={el.id} meta={el.meta} selected={isSelected} onMetaChange={(m: any) => updateElementMeta(el.id, m)} activePortId={(el.meta && (el.meta as any).activePortId) || null} activePortKind={(el.meta && (el.meta as any).activePortKind) || null} />
                 </div>
               )
             }
-
-            // default placeholder: square card with left inputs and right outputs
-            return (
-              <div
-                {...commonProps}
-                style={{
-                  ...commonProps.style as any,
-                  width: 120,
-                  height: 120,
-                  borderRadius: 8,
-                  background: el.type === 'note' ? '#fff7c2' : el.type === 'shape' ? '#cce5ff' : '#f3f3f3',
-                  border: isSelected ? '2px solid #fb923c' : '1px solid #fb923c',
-                  boxShadow: isSelected ? '0 4px 14px rgba(251,146,60,0.12)' : undefined,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  position: 'absolute'
-                }}
-              >
-                {/* left: inputs indicator */}
-                <div
-                  data-node-id={el.id}
-                  data-port-id="input-1"
-                  data-port-kind="input"
-                  style={{ position: 'absolute', left: -8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'auto' }}
-                >
-                  <div style={{ width: 12, height: 12, borderRadius: 9999, background: '#fff', border: '2px solid #fb923c' }} />
-                </div>
-
-                {/* right: outputs indicator */}
-                <div
-                  data-node-id={el.id}
-                  data-port-id="output-1"
-                  data-port-kind="output"
-                  style={{ position: 'absolute', right: -8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'auto' }}
-                >
-                  <div style={{ width: 12, height: 12, borderRadius: 9999, background: '#fff', border: '2px solid #fb923c' }} />
-                </div>
-
-                {/* center text */}
-                <div style={{ textAlign: 'center', pointerEvents: 'none' }}>
-                  <div style={{ fontSize: 12, fontWeight: 700 }}>{el.type}</div>
-                  <div style={{ fontSize: 11, color: '#444', marginTop: 6 }}>id: {el.id}</div>
-                </div>
-              </div>
-            )
           })}
           <div style={{ width: '100%', height: '100%' }} />
         </div>
       </div>
+
+      {/* connections SVG placed on top of everything in screen coordinates so it always covers full container */}
+      <svg className="absolute inset-0" style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
+        {connections.map((c, i) => {
+          try {
+            const fromEl = document.querySelector(`[data-node-id="${c.from.nodeId}"][data-port-id="${c.from.portId}"]`) as HTMLElement | null
+            const toEl = document.querySelector(`[data-node-id="${c.to.nodeId}"][data-port-id="${c.to.portId}"]`) as HTMLElement | null
+            if (!fromEl || !toEl) return null
+            const crect = containerRef.current!.getBoundingClientRect()
+            const frect = fromEl.getBoundingClientRect()
+            const trect = toEl.getBoundingClientRect()
+            // use screen coords relative to container (no transform)
+            const fx = frect.left + frect.width / 2 - crect.left
+            const fy = frect.top + frect.height / 2 - crect.top
+            const tx = trect.left + trect.width / 2 - crect.left
+            const ty = trect.top + trect.height / 2 - crect.top
+            return <line key={i} x1={fx} y1={fy} x2={tx} y2={ty} stroke="#ffffff" strokeWidth={1} strokeOpacity={0.9} />
+          } catch { return null }
+        })}
+        {connectingRef.current && (() => {
+          try {
+            const cur = connectingRef.current
+            if (!cur) return null
+            const crect = containerRef.current!.getBoundingClientRect()
+            const fromEl = document.querySelector(`[data-node-id="${cur.fromNode}"][data-port-id="${cur.fromPort}"]`) as HTMLElement | null
+            if (!fromEl || !cur.toScreen) return null
+            const frect = fromEl.getBoundingClientRect()
+            const fx = frect.left + frect.width / 2 - crect.left
+            const fy = frect.top + frect.height / 2 - crect.top
+            const tx = cur.toScreen.x
+            const ty = cur.toScreen.y
+            return <line x1={fx} y1={fy} x2={tx} y2={ty} stroke="#0ea5e9" strokeDasharray="4 2" strokeWidth={1} />
+          } catch { return null }
+        })()}
+      </svg>
       {/* Toolbar: tools with divider between each item. IconPointer selected by default */}
       <div className='fixed mx-auto left-0 right-0 bottom-2 w-max z-50 px-2 py-1 rounded-md bg-main-view-fg/6 text-main-view-fg text-sm select-none shadow-md flex items-center'>
         {(() => {
@@ -709,6 +874,17 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
           const nodeId = configNodeId ? (elements.find((e) => e.id === configNodeId)?.meta as any)?._nodeId : null
           if (!nodeId) return null
           const ConfigComp: any = getNodeConfig(nodeId)
+
+          // getNodeConfig may return null to indicate the node has no configurable UI
+          if (ConfigComp === null) {
+            return (
+              <div className="text-sm">
+                <div className="font-medium">No configuration available</div>
+                <div className="text-xs text-muted-foreground">This node has no configurable options.</div>
+              </div>
+            )
+          }
+
           return <ConfigComp meta={meta} setMeta={setMeta} />
         }}
       </NodeConfigDialog>

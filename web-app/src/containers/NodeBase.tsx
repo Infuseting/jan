@@ -11,12 +11,15 @@ export type NodeProps = {
   inputs?: NodePort[]
   outputs?: NodePort[]
   className?: string
+  // optional: highlight a specific port (used to show which output was chosen)
+  activePortId?: string | null
+  activePortKind?: 'input' | 'output' | null
   selected?: boolean
   onClick?: () => void
   children?: React.ReactNode
 }
 
-export default function NodeBase({ id, title = 'Node', inputs = [], outputs = [], className = '', selected = false, onClick, children }: NodeProps) {
+export default function NodeBase({ id, title = 'Node', inputs = [], outputs = [], className = '', activePortId = null, activePortKind = null, selected = false, onClick }: NodeProps) {
   return (
     <div
       data-node-id={id}
@@ -28,33 +31,39 @@ export default function NodeBase({ id, title = 'Node', inputs = [], outputs = []
       </div>
         {inputs.length > 0 && (
           <div className="absolute left-0 top-0 bottom-0 flex flex-col items-center justify-center pointer-events-none">
-            {inputs.map((p, i) => (
-              <div key={p.id || i} style={{ margin: 6, pointerEvents: 'auto' }}>
-                <div
-                  data-node-id={id}
-                  data-port-id={p.id}
-                  data-port-kind="input"
-                  className="w-4 h-4 rounded-full bg-white"
-                  style={{ border: '2px solid #fb923c' }}
-                />
-              </div>
-            ))}
+            {inputs.map((p, i) => {
+              const isActiveInput = activePortKind === 'input' && activePortId === p.id
+              return (
+                <div key={p.id || i} style={{ margin: 6, pointerEvents: 'auto' }}>
+                  <div
+                    data-node-id={id}
+                    data-port-id={p.id}
+                    data-port-kind="input"
+                    className="w-4 h-4 rounded-full"
+                    style={{ background: isActiveInput ? '#10b981' : '#ffffff', border: '2px solid #fb923c' }}
+                  />
+                </div>
+              )
+            })}
           </div>
         )}
 
         {outputs.length > 0 && (
           <div className="absolute right-0 top-0 bottom-0 flex flex-col items-center justify-center pointer-events-none">
-            {outputs.map((p, i) => (
-              <div key={p.id || i} style={{ margin: 6, pointerEvents: 'auto' }}>
-                <div
-                  data-node-id={id}
-                  data-port-id={p.id}
-                  data-port-kind="output"
-                  className="w-4 h-4 rounded-full bg-white"
-                  style={{ border: '2px solid #fb923c' }}
-                />
-              </div>
-            ))}
+            {outputs.map((p, i) => {
+              const isActiveOutput = activePortKind === 'output' && activePortId === p.id
+              return (
+                <div key={p.id || i} style={{ margin: 6, pointerEvents: 'auto' }}>
+                  <div
+                    data-node-id={id}
+                    data-port-id={p.id}
+                    data-port-kind="output"
+                    className="w-4 h-4 rounded-full"
+                    style={{ background: isActiveOutput ? '#10b981' : '#ffffff', border: '2px solid #fb923c' }}
+                  />
+                </div>
+              )
+            })}
           </div>
         )}
     </div>
