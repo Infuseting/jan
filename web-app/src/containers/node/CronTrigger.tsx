@@ -59,6 +59,11 @@ export function getNodeEntry() {
     category: 'Trigger',
     component: Node,
     config: NodeConfig,
+    // executor: when cron fires, this executor will be called by the runtime
+    execute: async (_input: any, meta?: Record<string, any>) => {
+      // Cron trigger simply returns the 'out' port selection so propagation happens
+      return { portId: 'out', output: { firedAt: Date.now(), meta } }
+    },
     defaultMeta: { cron: '0 * * * *' },
     display: { Icon: IconClock, title: 'Cron Trigger', description: 'Trigger on a cron schedule' },
   }

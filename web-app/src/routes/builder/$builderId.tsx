@@ -20,6 +20,13 @@ function RouteComponent() {
   const prevLeftOpen = useRef<boolean>(leftOpen)
 
   const builder = getBuilderById(builderId)
+  const [publishEnabled, setPublishEnabled] = useState<boolean>(() => {
+    try {
+      if (!builderId) return false
+      const raw = localStorage.getItem(`builder:${builderId}:publish`)
+      return raw === '1'
+    } catch { return false }
+  })
   const [name, setName] = useState(builder?.name || '')
   const [initialBoard, setInitialBoard] = useState<any | null>(null)
 
@@ -89,12 +96,18 @@ function RouteComponent() {
             className="flex items-center gap-1 border-1 border-main-view-fg/20"
           ><IconPlayerPlay />Preview</Button>
           <Button
-            variant="outline"
             size="sm"
-            className="ml-2 flex items-center gap-1 border-1 border-main-view-fg/20 "
-            >
-              Publish
-            </Button>
+            onClick={() => {
+              try {
+                const next = !publishEnabled
+                setPublishEnabled(next)
+                if (builderId) localStorage.setItem(`builder:${builderId}:publish`, next ? '1' : '0')
+              } catch { }
+            }}
+            className={`ml-2 flex items-center gap-1 ${publishEnabled ? 'bg-green-600 text-white' : 'border-1 border-main-view-fg/20'} `}
+          >
+            Publish
+          </Button>
         </div>
         
       </div>

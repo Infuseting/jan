@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { route } from '@/constants/routes'
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 
 import { useBuilderManagement } from '@/hooks/useBuilderManagement'
 import { useTranslation } from '@/i18n/react-i18next-compat'
@@ -19,6 +19,7 @@ import {
 import AddBuilderDialog from '@/containers/dialogs/AddBuilderDialog'
 import { DeleteBuilderDialog } from '@/containers/dialogs/DeleteBuilderDialog'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 
 import { formatDate } from '@/utils/formatDate'
 
@@ -92,6 +93,33 @@ function BuilderContent() {
   const formatBuilderDate = (timestamp: number) => {
     return formatDate(new Date(timestamp), { includeTime: false })
   }
+
+  // publish flags per-builder (stored in localStorage as `builder:${id}:publish` = '1'|'0')
+  const [publishMap, setPublishMap] = useState<Record<string, boolean>>({})
+
+  useEffect(() => {
+    const buildMap = () => {
+      const m: Record<string, boolean> = {}
+      try {
+        for (const b of builders as any) {
+          try {
+            m[b.id] = localStorage.getItem(`builder:${b.id}:publish`) === '1'
+          } catch { m[b.id] = false }
+        }
+      } catch {}
+      setPublishMap(m)
+    }
+    buildMap()
+    const onStorage = (ev: StorageEvent) => {
+      if (!ev.key) return
+      const m = ev.key.match(/^builder:(.+):publish$/)
+      if (!m) return
+      const id = m[1]
+      setPublishMap((prev) => ({ ...prev, [id]: ev.newValue === '1' }))
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [builders])
 
   // Filter builders based on search query
   const filteredBuilders = useMemo(() => {
@@ -246,6 +274,7 @@ function BuilderContent() {
                               >
                                 {builder.name}
                               </h3>
+                              
                             </div>
                             <p className="text-main-view-fg/50 text-xs line-clamp-2 mt-0.5">
                               {t('builder:updated')}{' '}
@@ -254,6 +283,17 @@ function BuilderContent() {
                           </div>
                         </div>
                         <div className="flex items-center">
+                              <Switch
+                                checked={!!publishMap[builder.id]}
+                                className='mr-2'
+                                onCheckedChange={(v) => {
+                                  try {
+                                    const next = !!v
+                                    localStorage.setItem(`builder:${builder.id}:publish`, next ? '1' : '0')
+                                    setPublishMap((prev) => ({ ...prev, [builder.id]: next }))
+                                  } catch {}
+                                }}
+                              />
                           <button
                             className="size-8 cursor-pointer flex items-center justify-center rounded-md hover:bg-main-view-fg/10 transition-all duration-200 ease-in-out"
                             title={t('builder:exportAgent')}

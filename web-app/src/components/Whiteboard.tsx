@@ -459,6 +459,126 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
   // use the centralized registry
   const nodeRegistry = centralNodeRegistry
 
+  // publish mode - if builderId provided, read local storage key to determine if publish mode enabled
+  const builderId = (rest as any).builderId as string | undefined
+  const [publishMode, setPublishMode] = useState<boolean>(() => {
+    try {
+      if (!builderId) return false
+      return localStorage.getItem(`builder:${builderId}:publish`) === '1'
+    } catch { return false }
+  })
+
+  // keep publishMode in sync with localStorage (so toggles from other components reflect here)
+  useEffect(() => {
+    if (!builderId) return
+    const handle = () => {
+      try { setPublishMode(localStorage.getItem(`builder:${builderId}:publish`) === '1') } catch { }
+    }
+    window.addEventListener('storage', handle)
+    const t = setInterval(handle, 2000)
+    return () => { window.removeEventListener('storage', handle); clearInterval(t) }
+  }, [builderId])
+
+  // Simple cron matcher for 5-field expressions (minute hour day month weekday)
+  // Supports: '*', '*/N', comma-separated lists (e.g. '0,15,30'), and numeric values.
+  // NOTE: uses the system local timezone (date local methods) so cron expressions
+  // are evaluated against the PC's timezone.
+  const cronMatches = (expr: string, date: Date): boolean => {
+    try {
+      const parts = (expr || '').trim().split(/\s+/)
+      if (parts.length < 5) return false
+
+      const [pm, ph, pd, pmon, pwd] = parts
+
+      // use local time values so cron runs in the PC timezone
+      const vMinute = date.getMinutes()
+      const vHour = date.getHours()
+      const vDate = date.getDate()
+      const vMonth = date.getMonth() + 1
+      const vWeekday = date.getDay() // 0 = Sunday
+
+  const matchPart = (p: string, v: number, min = 0, max = 59): boolean => {
+        if (!p) return false
+        if (p === '*') return true
+        // lists
+        if (p.indexOf(',') !== -1) {
+          return p.split(',').some((it) => matchPart(it, v, min, max))
+        }
+        if (p.startsWith('*/')) {
+          const n = Number(p.slice(2))
+          if (!n || n <= 0) return false
+          return (v % n) === 0
+        }
+        const num = Number(p)
+        if (!Number.isNaN(num)) return num === v
+        return false
+      }
+
+      return matchPart(pm, vMinute, 0, 59) && matchPart(ph, vHour, 0, 23) && matchPart(pd, vDate, 1, 31) && matchPart(pmon, vMonth, 1, 12) && matchPart(pwd, vWeekday, 0, 6)
+    } catch { return false }
+  }
+
+  // track last fired minute per element to avoid double-firing within same minute
+  const lastFiredRef = useRef<Record<string, string>>({})
+
+  // Scheduler: when publishMode is enabled, poll every second and run cron trigger nodes exactly at seconds === 0
+  // Uses local system timezone for detection and minute-keying.
+  useEffect(() => {
+    let timer: any = null
+    const tick = async () => {
+      if (!publishMode) return
+      const now = new Date()
+      const seconds = now.getSeconds()
+      if (seconds !== 0) return // only fire at exact minute start (00 seconds)
+
+      // key to identify this minute in local time
+      const minuteKey = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}-${now.getHours()}-${now.getMinutes()}`
+
+      try {
+        const cronEls = elements.filter((e) => (e.meta && (e.meta as any)._nodeId) === 'cron')
+        for (const el of cronEls) {
+          const cronExpr = ((el.meta && (el.meta as any).cron) || '').toString()
+          if (!cronExpr) continue
+          // ensure we haven't already fired this element for this minute
+          if (lastFiredRef.current[el.id] === minuteKey) continue
+          if (cronMatches(cronExpr, now)) {
+            const nodeEntry = nodeRegistry.find((n) => n.id === 'cron')
+            if (!nodeEntry || !nodeEntry.execute) continue
+            try {
+              console.debug('[Whiteboard] publish-mode: firing cron for element', el.id, cronExpr)
+              await runAndPropagate(
+                el.id,
+                nodeEntry.id,
+                nodeEntry.execute,
+                undefined,
+                el.meta || {},
+                {},
+                (elId: string) => connections.filter((c) => c.from.nodeId === elId).map((c) => ({ fromPortId: c.from.portId, targetElementId: c.to.nodeId, targetPortId: c.to.portId })),
+                (targetElementId: string) => {
+                  const tgt = elements.find((ee) => ee.id === targetElementId)
+                  if (!tgt) return null
+                  const nid = (tgt.meta as any)?._nodeId
+                  if (!nid) return null
+                  const entry = nodeRegistry.find((n) => n.id === nid)
+                  if (!entry || !entry.execute) return null
+                  return { executor: entry.execute as any, nodeId: entry.id, meta: tgt.meta }
+                },
+                (resultOutput: any) => resultOutput
+              )
+              // mark as fired for this minute (UTC minute key)
+              lastFiredRef.current[el.id] = minuteKey
+            } catch (e) { console.error('[Whiteboard] publish-mode cron execute error', e) }
+          }
+        }
+      } catch (e) { console.error('[Whiteboard] publish-mode tick error', e) }
+    }
+    // tick every second to detect exact minute starts
+    timer = setInterval(tick, 1000)
+    // if enabling publish mode, try to align to next second boundary and run immediately if seconds==0
+    if (publishMode) tick()
+    return () => { if (timer) clearInterval(timer) }
+  }, [publishMode, elements, connections, nodeRegistry])
+
   // If a node is selected for config but that node declares `config === null`, close the dialog immediately.
   useEffect(() => {
     if (!configNodeId) return
