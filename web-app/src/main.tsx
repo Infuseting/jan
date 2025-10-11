@@ -7,6 +7,9 @@ import { routeTree } from './routeTree.gen'
 
 import './index.css'
 import './i18n'
+import { getServiceHub } from '@/hooks/useServiceHub'
+import { handlePublishTrigger } from './lib/publishExecutor'
+import { listen } from '@tauri-apps/api/event'
 
 // Mobile-specific viewport and styling setup
 const setupMobileViewport = () => {
@@ -68,4 +71,36 @@ if (!rootElement.innerHTML) {
       <RouterProvider router={router} />
     </StrictMode>
   )
+}
+
+// Register a global listener for publish triggers emitted by the backend Tauri process.
+// This ensures that when Tauri emits `publish:trigger` the web-app will execute the
+// persisted board snapshot's node graph even if the UI is minimized.
+try {
+  // getServiceHub may not be initialized at the very first boot in some tests; guard it.
+  const hub = getServiceHub()
+  hub.events().listen('publish:trigger', (evt: any) => {
+    const payload = evt.payload || {}
+    const builderId = payload.builder_id || payload.builderId || ''
+    const triggerId = payload.trigger_id || payload.triggerId || ''
+    // run asynchronously
+    handlePublishTrigger(builderId, triggerId)
+  }).catch((e) => { console.error('failed to subscribe to publish:trigger', e) })
+} catch (e) {
+  // ignore in test environments
+}
+// Also register a direct Tauri event listener which does not depend on service hub readiness.
+try {
+  listen('publish:trigger', (evt: any) => {
+    try {
+      const payload = evt.payload || {}
+      const builderId = payload.builder_id || payload.builderId || ''
+      const triggerId = payload.trigger_id || payload.triggerId || ''
+      handlePublishTrigger(builderId, triggerId)
+    } catch (e) {
+      console.error('publish:trigger direct handler error', e)
+    }
+  }).catch((e) => { console.error('failed to register direct Tauri listener publish:trigger', e) })
+} catch (e) {
+  // ignore in environments without Tauri
 }

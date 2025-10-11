@@ -5,6 +5,8 @@ import { useBuilderManagement } from '@/hooks/useBuilderManagement'
 import Whiteboard from '@/components/Whiteboard'
 import { useLeftPanel } from '@/hooks/useLeftPanel'
 import { Button } from '@/components/ui/button'
+import * as publishService from '@/services/publish'
+import { isPlatformTauri } from '@/lib/platform'
 import { IconArrowLeft, IconDeviceFloppy, IconPlayCard1, IconPlayerPlay } from '@tabler/icons-react'
 
 export const Route = createFileRoute('/builder/$builderId')({
@@ -18,17 +20,31 @@ function RouteComponent() {
 
   const { open: leftOpen, setLeftPanel } = useLeftPanel()
   const prevLeftOpen = useRef<boolean>(leftOpen)
+  const wbRef = useRef<any>(null)
 
   const builder = getBuilderById(builderId)
   const [publishEnabled, setPublishEnabled] = useState<boolean>(() => {
     try {
       if (!builderId) return false
+      if (isPlatformTauri()) return false
       const raw = localStorage.getItem(`builder:${builderId}:publish`)
       return raw === '1'
     } catch { return false }
   })
+
+  // when running under Tauri, fetch publish flag from backend
+  useEffect(() => {
+    if (!isPlatformTauri() || !builderId) return
+    ;(async () => {
+      try {
+        const ids = await publishService.listPublishBuilders()
+        setPublishEnabled(ids.includes(builderId))
+      } catch {}
+    })()
+  }, [builderId])
   const [name, setName] = useState(builder?.name || '')
-  const [initialBoard, setInitialBoard] = useState<any | null>(null)
+  // undefined = not yet loaded; null = loaded but no board; object = loaded board
+  const [initialBoard, setInitialBoard] = useState<any | null | undefined>(undefined)
 
   // Hide left panel on mount, restore previous state on unmount
   useEffect(() => {
@@ -47,12 +63,29 @@ function RouteComponent() {
   useEffect(() => {
     if (!builderId) return
     try {
-      const key = `builder:${builderId}:board`
-      const raw = localStorage.getItem(key)
-      if (raw) {
-        setInitialBoard(JSON.parse(raw))
+      if (isPlatformTauri()) {
+        ;(async () => {
+          try {
+            let b = await publishService.getBuilderBoard(builderId)
+            if (!b) {
+              // retry once after short delay
+              await new Promise((r) => setTimeout(r, 250))
+              b = await publishService.getBuilderBoard(builderId)
+            }
+            if (b) setInitialBoard(JSON.parse(b))
+            else setInitialBoard(null)
+          } catch (err) { console.error('Error loading builder board', err); setInitialBoard(null) }
+        })()
+      } else {
+        const key = `builder:${builderId}:board`
+        const raw = localStorage.getItem(key)
+        if (raw) {
+          setInitialBoard(JSON.parse(raw))
+        } else {
+          setInitialBoard(null)
+        }
       }
-    } catch (err) { /* ignore */ }
+    } catch (err) { setInitialBoard(null) }
   }, [builderId])
 
   const handleSaveAndBack = async () => {
@@ -64,6 +97,16 @@ function RouteComponent() {
     // Only update if changed
     if (name.trim() !== builder.name) {
       await updateBuilder(builder.id, name.trim())
+    }
+
+    // ensure board is persisted before navigating away
+    try {
+      if (wbRef.current && typeof wbRef.current.saveNow === 'function') {
+        await wbRef.current.saveNow()
+      }
+    } catch (err) {
+      // ignore save errors for nav, but log
+      console.warn('save before navigation failed', err)
     }
 
     // go back to builder list
@@ -97,11 +140,17 @@ function RouteComponent() {
           ><IconPlayerPlay />Preview</Button>
           <Button
             size="sm"
-            onClick={() => {
+            onClick={async () => {
               try {
                 const next = !publishEnabled
                 setPublishEnabled(next)
-                if (builderId) localStorage.setItem(`builder:${builderId}:publish`, next ? '1' : '0')
+                if (builderId) {
+                  if (isPlatformTauri()) {
+                    await publishService.setBuilderPublish(builderId, next)
+                  } else {
+                    localStorage.setItem(`builder:${builderId}:publish`, next ? '1' : '0')
+                  }
+                }
               } catch { }
             }}
             className={`ml-2 flex items-center gap-1 ${publishEnabled ? 'bg-green-600 text-white' : 'border-1 border-main-view-fg/20'} `}
@@ -115,23 +164,31 @@ function RouteComponent() {
 
       {/* Whiteboard fills remaining area */}
       <div className="absolute inset-0">
-        <Whiteboard
-          minScale={0.1}
-          maxScale={10}
-          initialScale={1}
-          builderId={builderId}
-          initialBoard={initialBoard}
-          onRequestSave={async (snap: any) => {
-            try {
-              const key = `builder:${builderId}:board`
-              localStorage.setItem(key, JSON.stringify(snap))
-              // touch builder updated_at
-              if (builder) await updateBuilder(builder.id, builder.name)
-            } catch (err) {
-              console.error('Failed to save board', err)
-            }
-          }}
-        />
+        {/* Only mount Whiteboard after we've resolved initialBoard (undefined = loading) */}
+        {initialBoard !== undefined && (
+          <Whiteboard
+            minScale={0.1}
+            maxScale={10}
+            initialScale={1}
+            ref={wbRef}
+            builderId={builderId}
+            initialBoard={initialBoard}
+            onRequestSave={async (snap: any) => {
+              try {
+                const key = `builder:${builderId}:board`
+                if (isPlatformTauri()) {
+                  await publishService.upsertBuilderBoard(builderId, JSON.stringify(snap))
+                } else {
+                  localStorage.setItem(key, JSON.stringify(snap))
+                }
+                // touch builder updated_at
+                if (builder) await updateBuilder(builder.id, builder.name)
+              } catch (err) {
+                console.error('Failed to save board', err)
+              }
+            }}
+          />
+        )}
       </div>
     </div>
   )

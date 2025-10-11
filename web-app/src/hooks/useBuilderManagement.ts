@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import { ulid } from 'ulidx'
 import { useEffect } from 'react'
 import { localStorageKey } from '@/constants/localStorage'
+import { isPlatformTauri } from '@/lib/platform'
+import { getServiceHub, isServiceHubInitialized } from '@/hooks/useServiceHub'
 
 export type Builder = {
   id: string
@@ -21,8 +23,18 @@ type BuilderState = {
 
 const STORAGE_KEY = localStorageKey.builderManagement || 'builder-management'
 
-const loadFromStorage = (): Builder[] => {
+const loadFromStorage = async (): Promise<Builder[]> => {
   try {
+    if (isPlatformTauri()) {
+      const deadline = Date.now() + 5000
+      while (!isServiceHubInitialized() && Date.now() < deadline) {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, 100))
+      }
+      const res = await getServiceHub().core().invoke<any>('list_builders') as any
+      // convert expected format to Builder[]
+      return (res || []).map((b: any) => ({ id: b.id, name: b.name || b.id, updated_at: b.updated_at || 0 }))
+    }
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
@@ -33,8 +45,21 @@ const loadFromStorage = (): Builder[] => {
   }
 }
 
-const saveToStorage = (builders: Builder[]) => {
+const saveToStorage = async (builders: Builder[]) => {
   try {
+    if (isPlatformTauri()) {
+      // call save for each builder metadata (best-effort)
+      const deadline = Date.now() + 5000
+      while (!isServiceHubInitialized() && Date.now() < deadline) {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, 100))
+      }
+      for (const b of builders) {
+  try { await getServiceHub().core().invoke('client_invoke_log', { message: `save_builder_metadata builder=${b.id} name=${b.name}` }) } catch {}
+  await getServiceHub().core().invoke('save_builder_metadata', { payload: { builder_id: b.id, name: b.name, updated_at: b.updated_at } })
+      }
+      return
+    }
     const data = { builders, version: 0 }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
   } catch (err) {
@@ -54,8 +79,8 @@ const useBuilderStore = create<BuilderState>()((set, get) => ({
       updated_at: Date.now(),
     }
     const updated = [...get().builders, newBuilder]
-    set({ builders: updated })
-    saveToStorage(updated)
+  set({ builders: updated })
+  await saveToStorage(updated)
     return newBuilder
   },
 
@@ -63,20 +88,20 @@ const useBuilderStore = create<BuilderState>()((set, get) => ({
     const updated = get().builders.map((b) =>
       b.id === id ? { ...b, name, updated_at: Date.now() } : b
     )
-    set({ builders: updated })
-    saveToStorage(updated)
+  set({ builders: updated })
+  await saveToStorage(updated)
   },
 
   deleteBuilder: async (id) => {
     const updated = get().builders.filter((b) => b.id !== id)
-    set({ builders: updated })
-    saveToStorage(updated)
+  set({ builders: updated })
+  await saveToStorage(updated)
   },
 
   deleteBuilderWithThreads: async (id) => {
     const updated = get().builders.filter((b) => b.id !== id)
-    set({ builders: updated })
-    saveToStorage(updated)
+  set({ builders: updated })
+  await saveToStorage(updated)
   },
 
   getBuilderById: (id) => get().builders.find((b) => b.id === id),
@@ -85,12 +110,14 @@ const useBuilderStore = create<BuilderState>()((set, get) => ({
 export const useBuilderManagement = () => {
   const store = useBuilderStore()
 
-  // Load builders from localStorage on mount
+  // Load builders on mount (use backend when available)
   useEffect(() => {
-    const projects = loadFromStorage()
-    if (projects && projects.length > 0) {
-      useBuilderStore.setState({ builders: projects })
-    }
+    ;(async () => {
+      const projects = await loadFromStorage()
+      if (projects && projects.length > 0) {
+        useBuilderStore.setState({ builders: projects })
+      }
+    })()
   }, [])
 
   return store

@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState, useImperativeHandle } from 'react'
+import { getServiceHub } from '@/hooks/useServiceHub'
+import { isPlatformTauri } from '@/lib/platform'
 import { nodeRegistry as centralNodeRegistry, getNodeComponent, getNodeConfig } from '@/containers/node/nodeRegistry'
+import * as publishService from '@/services/publish'
 import { NodeType } from '@/lib/node'
-import { runExecutorForElement, runAndPropagate, onStart as onExecStart, onFinish as onExecFinish, onError as onExecError, onCancel as onExecCancel } from '@/lib/nodeExecution'
+import { runAndPropagate, onStart as onExecStart, onFinish as onExecFinish, onError as onExecError, onCancel as onExecCancel } from '@/lib/nodeExecution'
 import NodeConfigDialog from '@/containers/dialogs/NodeConfigDialog'
 import NodesListPanel from '@/containers/NodesListPanel'
 import { IconHandGrab, IconPlayerPlay, IconPointer } from '@tabler/icons-react';
@@ -18,7 +21,7 @@ const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
 type WBElementType = 'note' | 'shape' | 'image' | 'other'
 type WBElement = { id: string; type: WBElementType; x: number; y: number; meta?: Record<string, any> }
 
-export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale = 1, ...rest }: WhiteboardProps & { builderId?: string; initialBoard?: BoardSnapshot | null; onRequestSave?: (s: BoardSnapshot) => void }) {
+const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale = 1, ...rest }: WhiteboardProps & { builderId?: string; initialBoard?: BoardSnapshot | null; onRequestSave?: (s: BoardSnapshot) => void }, ref: React.ForwardedRef<any>) {
   const containerRef = useRef<HTMLDivElement | null>(null)
 
   // Inject styles for node states (running / success / error). Prefer moving these to a global stylesheet.
@@ -88,6 +91,46 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
   const [connections, setConnections] = useState<Array<{ from: { nodeId: string; portId: string }; to: { nodeId: string; portId: string } }>>([])
   const connectingRef = useRef<{ fromNode: string; fromPort: string; toScreen?: { x: number; y: number } } | null>(null)
 
+  // event-driven save helpers
+  const saveTimeoutRef = useRef<number | null>(null)
+  const needsSaveRef = useRef(false)
+  const scheduleSave = async (immediate = false): Promise<void> => {
+    const cb = (rest as any).onRequestSave as ((s: BoardSnapshot) => any) | undefined
+    if (!cb) return
+    try {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current)
+        saveTimeoutRef.current = null
+      }
+    } catch {}
+    const run = async () => {
+      try {
+        const snap: BoardSnapshot = { elements, connections, scale, translate }
+        const res = cb(snap)
+        if (res && typeof (res as any).then === 'function') {
+          await res
+        }
+      } catch {}
+    }
+    if (immediate) {
+      await run()
+      return
+    }
+    // short debounce to coalesce rapid mutations
+    // (use 250ms to be responsive but avoid spamming the backend)
+    // store numeric id for window.setTimeout
+    // @ts-ignore
+    saveTimeoutRef.current = window.setTimeout(() => { void run(); saveTimeoutRef.current = null }, 250) as unknown as number
+  }
+
+  // When a mutation occurs we set needsSaveRef; this effect runs after React applies
+  // elements/connections/scale/translate updates so save will capture the latest snapshot.
+  useEffect(() => {
+    if (!needsSaveRef.current) return
+    needsSaveRef.current = false
+    scheduleSave()
+  }, [elements, connections, scale, translate])
+
   const BASE_CELL = 32
 
   const uid = () => `e_${Date.now().toString(36)}_${Math.floor(Math.random() * 10000)}`
@@ -95,6 +138,7 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
   const updateElementMeta = (id: string, meta: Record<string, any>) => {
     pushHistory()
     setElements((arr) => arr.map((it) => (it.id === id ? { ...it, meta: { ...(it.meta || {}), ...(meta || {}) } } : it)))
+    needsSaveRef.current = true
   }
 
   // apply initialBoard when provided
@@ -123,18 +167,32 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
     historyRef.current.stack = []
   }, [(rest as any).initialBoard])
 
-  // auto-save: debounce and call onRequestSave when elements/connections/scale/translate change
+  // NOTE: saving is now event-driven. Call `scheduleSave()` at mutation points.
   useEffect(() => {
-    const cb = (rest as any).onRequestSave as ((s: BoardSnapshot) => void) | undefined
-    if (!cb) return
-    const handle = setTimeout(() => {
+    return () => {
       try {
-        const snap: BoardSnapshot = { elements, connections, scale, translate }
-        cb(snap)
+        // flush any pending save before unmount so navigation doesn't lose last edits
+        // Only flush when a save is actually needed (prevents overwriting a loaded board with an empty snapshot)
+        if (needsSaveRef.current) {
+          // scheduleSave returns a promise; fire-and-forget here since callers can use the exposed saveNow
+          void scheduleSave(true)
+        }
       } catch {}
-    }, 600)
-    return () => clearTimeout(handle)
-  }, [elements, connections, scale, translate, (rest as any).onRequestSave])
+      try {
+        if (saveTimeoutRef.current) {
+          clearTimeout(saveTimeoutRef.current)
+          saveTimeoutRef.current = null
+        }
+      } catch {}
+    }
+  }, [])
+
+  // expose imperative save method to parent so callers can await persistence before navigation
+  useImperativeHandle(ref, () => ({
+    saveNow: async () => {
+      await scheduleSave(true)
+    }
+  }), [elements, connections, scale, translate])
   const historyRef = useRef<{ stack: WBElement[][] }>({ stack: [] })
   const clipboardRef = useRef<{ elements: WBElement[]; connections: Array<{ from: { nodeId: string; portId: string }; to: { nodeId: string; portId: string } }> } | null>(null)
 
@@ -152,11 +210,13 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
     const prev = h.pop()!
     setElements(prev.map((e) => ({ ...e })))
     setSelectedIds([])
+    needsSaveRef.current = true
   }
 
   const addElement = (type: WBElementType, x: number, y: number, meta?: Record<string, any>) => {
     pushHistory()
     setElements((s) => [...s, { id: uid(), type, x, y, meta }])
+    needsSaveRef.current = true
   }
 
   useEffect(() => {
@@ -360,7 +420,9 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
                 const already = existing.some((cn) => cn.from.nodeId === cur.fromNode && cn.from.portId === cur.fromPort)
                 if (already) return existing
                 pushHistory()
-                return [...existing, { from: { nodeId: cur.fromNode, portId: cur.fromPort }, to: { nodeId, portId } }]
+                const next = [...existing, { from: { nodeId: cur.fromNode, portId: cur.fromPort }, to: { nodeId, portId } }]
+                needsSaveRef.current = true
+                return next
               })
             }
           }
@@ -415,6 +477,8 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
       draggingIdsRef.current = null
       dragStartRef.current = null
       dragStartPosMapRef.current = null
+      // if a drag just ended, schedule a save (positions changed)
+      needsSaveRef.current = true
     }
 
     el.addEventListener('pointerdown', onPointerDown)
@@ -461,22 +525,27 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
 
   // publish mode - if builderId provided, read local storage key to determine if publish mode enabled
   const builderId = (rest as any).builderId as string | undefined
-  const [publishMode, setPublishMode] = useState<boolean>(() => {
-    try {
-      if (!builderId) return false
-      return localStorage.getItem(`builder:${builderId}:publish`) === '1'
-    } catch { return false }
-  })
+  const [publishMode, setPublishMode] = useState<boolean>(false)
 
-  // keep publishMode in sync with localStorage (so toggles from other components reflect here)
+  // initialize publish mode from backend when running under Tauri; otherwise fallback to localStorage
   useEffect(() => {
     if (!builderId) return
-    const handle = () => {
-      try { setPublishMode(localStorage.getItem(`builder:${builderId}:publish`) === '1') } catch { }
+    if (isPlatformTauri()) {
+      ;(async () => {
+        try {
+          const ids = await publishService.listPublishBuilders()
+          setPublishMode(ids.includes(builderId))
+        } catch { setPublishMode(false) }
+      })()
+    } else {
+      try { setPublishMode(localStorage.getItem(`builder:${builderId}:publish`) === '1') } catch { setPublishMode(false) }
+      const handle = () => {
+        try { setPublishMode(localStorage.getItem(`builder:${builderId}:publish`) === '1') } catch { }
+      }
+      window.addEventListener('storage', handle)
+      const t = setInterval(handle, 2000)
+      return () => { window.removeEventListener('storage', handle); clearInterval(t) }
     }
-    window.addEventListener('storage', handle)
-    const t = setInterval(handle, 2000)
-    return () => { window.removeEventListener('storage', handle); clearInterval(t) }
   }, [builderId])
 
   // Simple cron matcher for 5-field expressions (minute hour day month weekday)
@@ -543,29 +612,42 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
           if (lastFiredRef.current[el.id] === minuteKey) continue
           if (cronMatches(cronExpr, now)) {
             const nodeEntry = nodeRegistry.find((n) => n.id === 'cron')
-            if (!nodeEntry || !nodeEntry.execute) continue
+            if (!nodeEntry) continue
             try {
               console.debug('[Whiteboard] publish-mode: firing cron for element', el.id, cronExpr)
-              await runAndPropagate(
-                el.id,
-                nodeEntry.id,
-                nodeEntry.execute,
-                undefined,
-                el.meta || {},
-                {},
-                (elId: string) => connections.filter((c) => c.from.nodeId === elId).map((c) => ({ fromPortId: c.from.portId, targetElementId: c.to.nodeId, targetPortId: c.to.portId })),
-                (targetElementId: string) => {
-                  const tgt = elements.find((ee) => ee.id === targetElementId)
-                  if (!tgt) return null
-                  const nid = (tgt.meta as any)?._nodeId
-                  if (!nid) return null
-                  const entry = nodeRegistry.find((n) => n.id === nid)
-                  if (!entry || !entry.execute) return null
-                  return { executor: entry.execute as any, nodeId: entry.id, meta: tgt.meta }
-                },
-                (resultOutput: any) => resultOutput
-              )
-              // mark as fired for this minute (UTC minute key)
+              // If running under Tauri, delegate execution to native backend
+              if (isPlatformTauri()) {
+                try {
+                  // call execute_trigger(builder_id, trigger_id) on backend
+                  const bId = builderId || ''
+                  await getServiceHub().core().invoke('execute_trigger', { builder_id: bId, trigger_id: el.id })
+                } catch (err) {
+                  console.error('[Whiteboard] native execute_trigger error', err)
+                }
+              } else {
+                // Fallback: run in-browser executor and propagate
+                if (!nodeEntry.execute) continue
+                await runAndPropagate(
+                  el.id,
+                  nodeEntry.id,
+                  nodeEntry.execute,
+                  undefined,
+                  el.meta || {},
+                  {},
+                  (elId: string) => connections.filter((c) => c.from.nodeId === elId).map((c) => ({ fromPortId: c.from.portId, targetElementId: c.to.nodeId, targetPortId: c.to.portId })),
+                  (targetElementId: string) => {
+                    const tgt = elements.find((ee) => ee.id === targetElementId)
+                    if (!tgt) return null
+                    const nid = (tgt.meta as any)?._nodeId
+                    if (!nid) return null
+                    const entry = nodeRegistry.find((n) => n.id === nid)
+                    if (!entry || !entry.execute) return null
+                    return { executor: entry.execute as any, nodeId: entry.id, meta: tgt.meta }
+                  },
+                  (resultOutput: any) => resultOutput
+                )
+              }
+              // mark as fired for this minute (local minute key)
               lastFiredRef.current[el.id] = minuteKey
             } catch (e) { console.error('[Whiteboard] publish-mode cron execute error', e) }
           }
@@ -639,6 +721,53 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
     return () => { offStart(); offFinish(); offErr(); offCancel() }
   }, [])
 
+  // Listen for backend-published triggers when running under Tauri
+  useEffect(() => {
+    if (!isPlatformTauri()) return
+    let unsub: (() => void) | null = null
+    try {
+      getServiceHub().events().listen('publish:trigger', (evt: any) => {
+        try {
+          const payload = evt.payload || {}
+          const bId = payload.builder_id || payload.builderId || ''
+          const trg = payload.trigger_id || payload.triggerId || ''
+          // only handle triggers for this builder (if builderId prop is set)
+          if (builderId && bId !== builderId) return
+          if (!trg) return
+          const el = elements.find((e) => e.id === trg)
+          if (!el) return
+          const nodeEntry = nodeRegistry.find((n) => n.id === (el.meta as any)?._nodeId)
+          if (!nodeEntry || !nodeEntry.execute) return
+          // reuse the same execution path as the publish-mode scheduler fallback
+          (async () => {
+            try {
+              await runAndPropagate(
+                el.id,
+                nodeEntry.id,
+                nodeEntry.execute as any,
+                undefined,
+                el.meta || {},
+                {},
+                (elId: string) => connections.filter((c) => c.from.nodeId === elId).map((c) => ({ fromPortId: c.from.portId, targetElementId: c.to.nodeId, targetPortId: c.to.portId })),
+                (targetElementId: string) => {
+                  const tgt = elements.find((ee) => ee.id === targetElementId)
+                  if (!tgt) return null
+                  const nid = (tgt.meta as any)?._nodeId
+                  if (!nid) return null
+                  const entry = nodeRegistry.find((n) => n.id === nid)
+                  if (!entry || !entry.execute) return null
+                  return { executor: entry.execute as any, nodeId: entry.id, meta: tgt.meta }
+                },
+                (resultOutput: any) => resultOutput
+              )
+            } catch (e) { console.error('[Whiteboard] publish:trigger execute error', e) }
+          })()
+        } catch (e) { console.error('[Whiteboard] publish:trigger handler error', e) }
+      }).then((u) => { unsub = u }).catch((e) => { console.error('failed to subscribe to publish:trigger', e) })
+    } catch (e) { console.error('publish:trigger listener setup failed', e) }
+    return () => { if (unsub) unsub() }
+  }, [builderId, elements, connections, nodeRegistry])
+
   const openPaletteAt = (boardPos: { x: number; y: number }) => {
     if (activeTool === 'hand') return
     setPaletteClickBoard(boardPos)
@@ -682,6 +811,7 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
     pushHistory()
     setElements((arr) => arr.filter((it) => !selectedIds.includes(it.id)))
     setSelectedIds([])
+    needsSaveRef.current = true
   }
 
   // copy selected
@@ -722,10 +852,14 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
           const toAdd = valid.filter((r) => !existingFroms.has(`${r.from.nodeId}::${r.from.portId}`))
           if (toAdd.length === 0) return arr
           pushHistory()
-          return [...arr, ...toAdd]
+          const next = [...arr, ...toAdd]
+          // mark that a save is needed; an effect will run scheduleSave after state updates
+          needsSaveRef.current = true
+          return next
         })
       }
     }
+    needsSaveRef.current = true
   }
 
   // select all
@@ -1034,4 +1168,8 @@ export default function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale
         
             
   )
-}
+
+})
+
+export default Whiteboard
+

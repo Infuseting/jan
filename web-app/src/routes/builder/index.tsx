@@ -20,6 +20,8 @@ import AddBuilderDialog from '@/containers/dialogs/AddBuilderDialog'
 import { DeleteBuilderDialog } from '@/containers/dialogs/DeleteBuilderDialog'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import * as publishService from '@/services/publish'
+import { isPlatformTauri } from '@/lib/platform'
 
 import { formatDate } from '@/utils/formatDate'
 
@@ -34,7 +36,7 @@ function BuilderContent() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   // use builder-management hook which exposes builders directly
-  const { builders, addBuilder, updateBuilder, getBuilderById } = useBuilderManagement()
+  const { builders, setBuilders, addBuilder, updateBuilder, getBuilderById } = useBuilderManagement()
   type BuilderItem = { id: string; name: string; updated_at: number }
   const typedBuilders: BuilderItem[] = (builders as unknown) as BuilderItem[]
   const [open, setOpen] = useState(false)
@@ -48,15 +50,20 @@ function BuilderContent() {
     setDeleteConfirmOpen(true)
   }
 
-  const handleExport = (id: string) => {
+  const handleExport = async (id: string) => {
     const builder = getBuilderById(id)
     if (!builder) return
     // include board snapshot if present
     let payload: any = { ...builder }
     try {
-      const key = `builder:${id}:board`
-      const raw = localStorage.getItem(key)
-      if (raw) payload.board = JSON.parse(raw)
+      if (isPlatformTauri()) {
+        const raw = await publishService.getBuilderBoard(id)
+        if (raw) payload.board = JSON.parse(raw)
+      } else {
+        const key = `builder:${id}:board`
+        const raw = localStorage.getItem(key)
+        if (raw) payload.board = JSON.parse(raw)
+      }
     } catch {}
     const dataStr = JSON.stringify(payload, null, 2)
     const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr)
@@ -103,22 +110,40 @@ function BuilderContent() {
       try {
         for (const b of builders as any) {
           try {
-            m[b.id] = localStorage.getItem(`builder:${b.id}:publish`) === '1'
+            if (isPlatformTauri()) {
+              // will be populated by listPublishBuilders later
+              m[b.id] = false
+            } else {
+              m[b.id] = localStorage.getItem(`builder:${b.id}:publish`) === '1'
+            }
           } catch { m[b.id] = false }
         }
       } catch {}
       setPublishMap(m)
     }
     buildMap()
-    const onStorage = (ev: StorageEvent) => {
-      if (!ev.key) return
-      const m = ev.key.match(/^builder:(.+):publish$/)
-      if (!m) return
-      const id = m[1]
-      setPublishMap((prev) => ({ ...prev, [id]: ev.newValue === '1' }))
+    if (isPlatformTauri()) {
+      ;(async () => {
+        try {
+          const ids = await publishService.listPublishBuilders()
+          const m: Record<string, boolean> = {}
+          for (const b of builders as any) m[b.id] = ids.includes(b.id)
+          setPublishMap(m)
+        } catch {}
+      })()
     }
-    window.addEventListener('storage', onStorage)
-    return () => window.removeEventListener('storage', onStorage)
+    if (!isPlatformTauri()) {
+      const onStorage = (ev: StorageEvent) => {
+        if (!ev.key) return
+        const m = ev.key.match(/^builder:(.+):publish$/)
+        if (!m) return
+        const id = m[1]
+        setPublishMap((prev) => ({ ...prev, [id]: ev.newValue === '1' }))
+      }
+      window.addEventListener('storage', onStorage)
+      return () => window.removeEventListener('storage', onStorage)
+    }
+    return () => {}
   }, [builders])
 
   // Filter builders based on search query
@@ -157,25 +182,68 @@ function BuilderContent() {
               const text = await file.text()
               const payload = JSON.parse(text)
               const name = payload.name || 'imported-builder'
-              // if payload.id corresponds to existing builder, update it; otherwise create a new builder
+              // Prefer using provided id if available; if it exists in frontend store, update, otherwise create a new builder with given id when possible
               let targetId: string | null = null
               if (payload.id) {
                 const existing = getBuilderById(payload.id)
                 if (existing) {
                   await updateBuilder(payload.id, name)
                   targetId = payload.id
+                } else {
+                  // create an in-memory builder entry with the provided id so UI shows it immediately
+                  try {
+                    const newEntry = { id: payload.id, name: payload.name || name, updated_at: payload.updated_at || Date.now() }
+                    setBuilders([...(builders as any), newEntry])
+                    targetId = payload.id
+                    if (isPlatformTauri()) {
+                      // persist metadata and board under the provided id on native side
+                      await publishService.saveBuilderMetadata(payload.id, payload.name || name, payload.updated_at)
+                      if (payload.board) {
+                        await publishService.upsertBuilderBoard(payload.id, JSON.stringify(payload.board))
+                      }
+                    } else {
+                      // non-native: persist board and metadata locally
+                      if (payload.board) {
+                        localStorage.setItem(`builder:${payload.id}:board`, JSON.stringify(payload.board))
+                      }
+                      await publishService.saveBuilderMetadata(payload.id, payload.name || name, payload.updated_at)
+                    }
+                  } catch (e) {
+                    console.error('Failed to persist imported builder under provided id', e)
+                    // fallback: create a generated builder id
+                    const created = await addBuilder(name)
+                    targetId = created.id
+                  }
                 }
               }
               if (!targetId) {
                 const created = await addBuilder(name)
                 targetId = created.id
               }
+              // If we haven't already persisted board/metadata for the chosen targetId, do it now
               if (payload.board) {
-                try { localStorage.setItem(`builder:${targetId}:board`, JSON.stringify(payload.board)) } catch {}
+                try {
+                  if (isPlatformTauri()) {
+                    await publishService.upsertBuilderBoard(targetId, JSON.stringify(payload.board))
+                    // also save metadata for this id so it appears in publish list operations
+                    await publishService.saveBuilderMetadata(targetId, payload.name || name, payload.updated_at)
+                  } else {
+                    localStorage.setItem(`builder:${targetId}:board`, JSON.stringify(payload.board))
+                    // best-effort: persist metadata in local storage builder-management
+                    await publishService.saveBuilderMetadata(targetId, payload.name || name, payload.updated_at)
+                  }
+                } catch (err) {
+                  console.error('Failed to persist imported board/metadata', err)
+                }
+              } else {
+                // if no board but payload contains metadata fields, still write metadata
+                if (isPlatformTauri() && payload.id) {
+                  try { await publishService.saveBuilderMetadata(payload.id, payload.name || name, payload.updated_at) } catch {}
+                }
               }
               // reset input
               ;(ev.target as HTMLInputElement).value = ''
-              // navigate to imported builder
+              // navigate to imported builder (prefer targetId)
               navigate({ to: route.builder.detail, params: { builderId: targetId } })
             } catch (err) {
               console.error('Import failed', err)
@@ -286,12 +354,16 @@ function BuilderContent() {
                               <Switch
                                 checked={!!publishMap[builder.id]}
                                 className='mr-2'
-                                onCheckedChange={(v) => {
+                                onCheckedChange={async (v) => {
                                   try {
                                     const next = !!v
-                                    localStorage.setItem(`builder:${builder.id}:publish`, next ? '1' : '0')
+                                    if (isPlatformTauri()) {
+                                      await publishService.setBuilderPublish(builder.id, next)
+                                    } else {
+                                      localStorage.setItem(`builder:${builder.id}:publish`, next ? '1' : '0')
+                                    }
                                     setPublishMap((prev) => ({ ...prev, [builder.id]: next }))
-                                  } catch {}
+                                  } catch (err) { console.error(err) }
                                 }}
                               />
                           <button

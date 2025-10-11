@@ -108,6 +108,21 @@ pub fn run() {
             // Download
             core::downloads::commands::download_files,
             core::downloads::commands::cancel_download_task,
+            // Publish commands
+            core::publish::commands::log_publish_fire,
+            core::publish::commands::client_invoke_log,
+            core::publish::commands::execute_trigger,
+                core::publish::commands::list_publish_builders,
+                core::publish::commands::get_builder_board,
+                core::publish::commands::set_builder_publish,
+                core::publish::commands::upsert_builder_board,
+                // builder management
+                core::publish::commands::list_builders,
+                core::publish::commands::save_builder_metadata,
+                core::publish::commands::delete_builder,
+                core::publish::commands::list_builders,
+                core::publish::commands::save_builder_metadata,
+                core::publish::commands::delete_builder,
         ])
         .manage(AppState {
             app_token: Some(generate_app_token()),
@@ -194,6 +209,13 @@ pub fn run() {
 
             setup_mcp(app);
             setup::setup_theme_listener(app)?;
+            // Start publish scheduler in background
+            {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::core::publish::run_scheduler(app_handle).await;
+                });
+            }
             Ok(())
         })
         .build(tauri::generate_context!())
