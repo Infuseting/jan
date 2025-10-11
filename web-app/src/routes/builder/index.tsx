@@ -359,6 +359,12 @@ function BuilderContent() {
                                     const next = !!v
                                     if (isPlatformTauri()) {
                                       await publishService.setBuilderPublish(builder.id, next)
+                                      // persist current metadata so backend doesn't overwrite name/updated_at
+                                      try {
+                                        if (builder.name) {
+                                          await publishService.saveBuilderMetadata(builder.id, builder.name, builder.updated_at)
+                                        }
+                                      } catch (e) { console.error('Failed to save builder metadata after publish toggle', e) }
                                     } else {
                                       localStorage.setItem(`builder:${builder.id}:publish`, next ? '1' : '0')
                                     }
@@ -400,7 +406,10 @@ function BuilderContent() {
         open={open}
         onOpenChange={setOpen}
         editingKey={editingKey}
-        initialData={editingKey ? getBuilderById(editingKey) : undefined}
+        initialData={editingKey ? (() => {
+          const b = getBuilderById(editingKey)
+          return b ? { id: b.id, name: b.name || '', updated_at: b.updated_at } : undefined
+        })() : undefined}
         onSave={handleSave}
       />
       <DeleteBuilderDialog

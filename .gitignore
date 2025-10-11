@@ -1,4 +1,5 @@
 .env
+**/*.toml
 error.log
 node_modules
 *.tgz

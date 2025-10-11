@@ -185,17 +185,24 @@ export async function execute(input?: any, meta?: Record<string, any>, context?:
   const finalUrl = buildUrl()
   const methodUp = m.toUpperCase()
   const fetchOpts: any = { method: methodUp, headers }
+  
   if (methodUp !== 'GET' && bodyRaw) {
     const b = substituteTokens(bodyRaw, inputSample, metaSample)
     fetchOpts.body = b
   }
+  
+  
   try {
+    
+  console.log("HTTP Request execute")
     const resp = await fetch(finalUrl, { ...fetchOpts, signal: context && context.signal })
+    console.log(resp)
     const text = await resp.text()
     const respHeaders: Record<string,string> = {}
     try { resp.headers.forEach((v,k) => { respHeaders[k] = v }) } catch {}
     return { portId: 'out', output: { status: resp.status, statusText: resp.statusText, headers: respHeaders, body: text } }
   } catch (e: any) {
+    console.error('HTTP Request error', e)
     return { portId: 'out', output: { error: true, message: String(e) } }
   }
 }

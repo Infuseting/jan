@@ -147,6 +147,10 @@ function RouteComponent() {
                 if (builderId) {
                   if (isPlatformTauri()) {
                     await publishService.setBuilderPublish(builderId, next)
+                    // write metadata so backend keeps builder name/updated_at
+                    try {
+                      if (builder?.name) await publishService.saveBuilderMetadata(builderId, builder.name, builder.updated_at)
+                    } catch (e) { console.error('Failed to save builder metadata after publish toggle', e) }
                   } else {
                     localStorage.setItem(`builder:${builderId}:publish`, next ? '1' : '0')
                   }

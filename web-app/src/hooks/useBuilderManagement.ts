@@ -7,7 +7,8 @@ import { getServiceHub, isServiceHubInitialized } from '@/hooks/useServiceHub'
 
 export type Builder = {
   id: string
-  name: string
+  // name may be absent when coming from the backend; keep optional
+  name?: string
   updated_at: number
 }
 
@@ -28,12 +29,11 @@ const loadFromStorage = async (): Promise<Builder[]> => {
     if (isPlatformTauri()) {
       const deadline = Date.now() + 5000
       while (!isServiceHubInitialized() && Date.now() < deadline) {
-        // eslint-disable-next-line no-await-in-loop
         await new Promise((r) => setTimeout(r, 100))
       }
-      const res = await getServiceHub().core().invoke<any>('list_builders') as any
-      // convert expected format to Builder[]
-      return (res || []).map((b: any) => ({ id: b.id, name: b.name || b.id, updated_at: b.updated_at || 0 }))
+  const res = await getServiceHub().core().invoke('list_builders')
+  const arr = Array.isArray(res) ? res as Array<{ id: string; name?: string; updated_at?: number }> : []
+  return arr.map((b) => ({ id: b.id, name: b.name, updated_at: b.updated_at || 0 }))
     }
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
@@ -51,12 +51,21 @@ const saveToStorage = async (builders: Builder[]) => {
       // call save for each builder metadata (best-effort)
       const deadline = Date.now() + 5000
       while (!isServiceHubInitialized() && Date.now() < deadline) {
-        // eslint-disable-next-line no-await-in-loop
         await new Promise((r) => setTimeout(r, 100))
       }
       for (const b of builders) {
-  try { await getServiceHub().core().invoke('client_invoke_log', { message: `save_builder_metadata builder=${b.id} name=${b.name}` }) } catch {}
-  await getServiceHub().core().invoke('save_builder_metadata', { payload: { builder_id: b.id, name: b.name, updated_at: b.updated_at } })
+        try {
+          await getServiceHub().core().invoke('client_invoke_log', { message: `save_builder_metadata builder=${b.id} name=${b.name || ''}` })
+        } catch (err) {
+          // non-fatal logging failure
+          console.debug('client_invoke_log failed', err)
+        }
+        // only include the name in the payload when a non-empty name is present. This avoids
+        // overwriting an existing name on the backend with the builder id when the name was
+        // missing from the frontend's representation.
+        const payload: { builder_id: string; updated_at: number; name?: string } = { builder_id: b.id, updated_at: b.updated_at }
+        if (b.name) payload.name = b.name
+        await getServiceHub().core().invoke('save_builder_metadata', { payload })
       }
       return
     }
@@ -112,7 +121,7 @@ export const useBuilderManagement = () => {
 
   // Load builders on mount (use backend when available)
   useEffect(() => {
-    ;(async () => {
+    (async () => {
       const projects = await loadFromStorage()
       if (projects && projects.length > 0) {
         useBuilderStore.setState({ builders: projects })
