@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { localStorageKey } from '@/constants/localStorage'
 import { isPlatformTauri } from '@/lib/platform'
 import { getServiceHub, isServiceHubInitialized } from '@/hooks/useServiceHub'
+import * as publishService from '@/services/publish'
 
 export type Builder = {
   id: string
@@ -111,6 +112,47 @@ const useBuilderStore = create<BuilderState>()((set, get) => ({
     const updated = get().builders.filter((b) => b.id !== id)
   set({ builders: updated })
   await saveToStorage(updated)
+
+    // Ensure publish state and associated artifacts are cleaned up.
+    try {
+      // Unset publish flag (this will update publish.json on Tauri or localStorage flag on web)
+      await publishService.setBuilderPublish(id, false).catch(() => {})
+  } catch (e) { console.debug('publishService.setBuilderPublish failed', e) }
+
+    try {
+      if (isPlatformTauri()) {
+        // Ask native side to remove the builder directory (best-effort)
+        const deadline = Date.now() + 5000
+        while (!isServiceHubInitialized() && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 100))
+        }
+        try {
+          // Some native invocations expect different arg shapes; try a couple of variants.
+          try {
+            await getServiceHub().core().invoke('delete_builder', { builder_id: id })
+            console.info('Invoked delete_builder with { builder_id }')
+          } catch (err1) {
+            try {
+              await getServiceHub().core().invoke('delete_builder', { builderId: id })
+              console.info('Invoked delete_builder with { builderId }')
+            } catch (err2) {
+              console.error('delete_builder invocation variants failed', err1, err2)
+            }
+          }
+        } catch (e) {
+          // non-fatal
+          console.error('Failed to invoke native delete_builder (outer)', e)
+        }
+      } else {
+        // Web fallback: remove stored board and publish flag keys
+        try {
+          localStorage.removeItem(`builder:${id}:board`)
+          localStorage.removeItem(`builder:${id}:publish`)
+        } catch (e) { console.debug('Failed to cleanup localStorage for builder', id, e) }
+      }
+    } catch (e) {
+      console.error('deleteBuilderWithThreads cleanup error', e)
+    }
   },
 
   getBuilderById: (id) => get().builders.find((b) => b.id === id),
