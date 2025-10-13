@@ -50,6 +50,12 @@ export const useMessages = create<MessageState>()((set, get) => ({
           ],
         },
       }))
+      try {
+        // Notify listeners that a message was created so triggers can react
+        getServiceHub().events().emit('message:created', createdMessage).catch(() => {})
+      } catch (e) {
+        // ignore
+      }
     })
   },
   deleteMessage: (threadId, messageId) => {

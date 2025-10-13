@@ -3,6 +3,7 @@ import { getNodeEntry as getWhileNodeEntry } from './WhileNode'
 import { getNodeEntry as getForNodeEntry } from './ForNode'
 import { getNodeEntry as getCronNodeEntry } from './CronTrigger'
 import { getNodeEntry as getThreadMessageNodeEntry } from './ThreadMessageTrigger'
+import { getNodeEntry as getThreadCreatedNodeEntry } from './ThreadCreatedTrigger'
 import { getNodeEntry as getManualNodeEntry } from './ManualTrigger'
 import { getNodeEntry as getHttpRequestNodeEntry } from './HttpRequestNode'
 import React from 'react'
@@ -57,6 +58,7 @@ const registry: NodeEntry[] = [
   getForNodeEntry(),
   getCronNodeEntry(),
   getThreadMessageNodeEntry(),
+  getThreadCreatedNodeEntry(),
   getManualNodeEntry(),
   getHttpRequestNodeEntry(),
 ]

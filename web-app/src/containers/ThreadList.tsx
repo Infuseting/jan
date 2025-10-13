@@ -316,11 +316,25 @@ function ThreadList({
   variant = 'default',
   currentProjectId,
 }: ThreadListProps) {
+  const displayedThreads = useMemo(() => {
+    // When in project variant, only show threads that belong to a project.
+    // If currentProjectId is provided, only show threads for that project.
+    return threads.filter((t) => {
+      if (variant === 'project') {
+        if (currentProjectId) {
+          return t.metadata?.project?.id === currentProjectId
+        }
+        return !!t.metadata?.project?.id
+      }
+      return true
+    })
+  }, [threads, variant, currentProjectId])
+
   const sortedThreads = useMemo(() => {
-    return threads.sort((a, b) => {
+    return [...displayedThreads].sort((a, b) => {
       return (b.updated || 0) - (a.updated || 0)
     })
-  }, [threads])
+  }, [displayedThreads])
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -338,9 +352,9 @@ function ThreadList({
         items={sortedThreads.map((t) => t.id)}
         strategy={verticalListSortingStrategy}
       >
-        {sortedThreads.map((thread, index) => (
+        {sortedThreads.map((thread) => (
           <SortableItem
-            key={index}
+            key={thread.id}
             thread={thread}
             variant={variant}
             currentProjectId={currentProjectId}

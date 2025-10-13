@@ -10,6 +10,7 @@ import './i18n'
 import { getServiceHub } from '@/hooks/useServiceHub'
 import { handlePublishTrigger } from './lib/publishExecutor'
 import { listen } from '@tauri-apps/api/event'
+import { startMessageTriggerDispatcher } from './lib/messageTriggerDispatcher'
 
 // Mobile-specific viewport and styling setup
 const setupMobileViewport = () => {
@@ -104,3 +105,8 @@ try {
 } catch (e) {
   // ignore in environments without Tauri
 }
+
+// Start message trigger dispatcher to listen for local message events and dispatch triggers
+try {
+  startMessageTriggerDispatcher()
+} catch (e) { console.error('failed to start message trigger dispatcher', e) }

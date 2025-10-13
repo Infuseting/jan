@@ -265,6 +265,15 @@ export const useThreads = create<ThreadState>()((set, get) => ({
         })
         return createdThread
       })
+      .then((createdThread) => {
+        try {
+          // Notify listeners that a thread was created so triggers can react
+          getServiceHub().events().emit('thread:created', createdThread).catch(() => {})
+        } catch (e) {
+          // ignore
+        }
+        return createdThread
+      })
   },
   updateCurrentThreadAssistant: (assistant) => {
     set((state) => {
