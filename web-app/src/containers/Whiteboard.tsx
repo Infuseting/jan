@@ -2,56 +2,31 @@ import React, { useEffect, useRef, useState, useImperativeHandle } from 'react'
 import { getServiceHub } from '@/hooks/useServiceHub'
 import { isPlatformTauri } from '@/lib/platform'
 import { nodeRegistry as centralNodeRegistry, getNodeComponent, getNodeConfig } from '@/containers/node/nodeRegistry'
+import { BoardSnapshot, WBElement, WBElementType, clamp } from '../types/board'
 import * as publishService from '@/services/publish'
-import { NodeType } from '@/lib/node'
 import { runAndPropagate, onStart as onExecStart, onFinish as onExecFinish, onError as onExecError, onCancel as onExecCancel } from '@/lib/nodeExecution'
 import NodeConfigDialog from '@/containers/dialogs/NodeConfigDialog'
 import NodesListPanel from '@/containers/NodesListPanel'
-import { IconHandGrab, IconPlayerPlay, IconPointer } from '@tabler/icons-react';
+import { IconHandGrab, IconPointer } from '@tabler/icons-react';
+import useNodeStateStyles from '../hooks/useNodeStateStyles'
+import { uid } from '@/lib/uid'
+import ConnectionsSVG from '@/containers/whiteboard/ConnectionsSVG'
+import NodesRenderer from '@/containers/whiteboard/NodesRenderer'
 // configs are provided by the node registry (nodeMap -> config)
 
 type WhiteboardProps = { minScale?: number; maxScale?: number; initialScale?: number }
-type BoardSnapshot = {
-  elements: WBElement[]
-  connections: Array<{ from: { nodeId: string; portId: string }; to: { nodeId: string; portId: string } }>
-  scale: number
-  translate: { x: number; y: number }
+// types imported from ./whiteboard/types
+interface WhiteboardFullProps extends WhiteboardProps {
+  builderId?: string
+  initialBoard?: BoardSnapshot | null
+  onRequestSave?: (s: BoardSnapshot) => void | Promise<void>
 }
-const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
-type WBElementType = 'note' | 'shape' | 'image' | 'other'
-type WBElement = { id: string; type: WBElementType; x: number; y: number; meta?: Record<string, any> }
 
-const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale = 1, ...rest }: WhiteboardProps & { builderId?: string; initialBoard?: BoardSnapshot | null; onRequestSave?: (s: BoardSnapshot) => void }, ref: React.ForwardedRef<any>) {
+const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxScale = 10, initialScale = 1, builderId, initialBoard, onRequestSave }: WhiteboardFullProps, ref: React.ForwardedRef<any>) {
   const containerRef = useRef<HTMLDivElement | null>(null)
 
-  // Inject styles for node states (running / success / error). Prefer moving these to a global stylesheet.
-  useEffect(() => {
-    const id = 'wb-node-state-styles'
-    if (document.getElementById(id)) return
-    const style = document.createElement('style')
-    style.id = id
-    style.innerHTML = `
-      .node-wrapper { position: absolute; display: inline-block }
-      .node--selected { box-shadow: 0 0 0 2px rgba(99,102,241,0.12) inset }
-      /* when a port is selected for connection, highlight node with green border */
-      .node--port-selected { box-shadow: 0 0 0 2px rgba(16,185,129,0.9) inset }
-      .node--success { box-shadow: 0 0 0 2px rgba(16,185,129,0.6) inset }
-      .node--error { box-shadow: 0 0 0 2px rgba(239,68,68,0.7) inset }
-      .node--running { position: relative; }
-      .node--running::after {
-        content: '';
-        position: absolute;
-        inset: -6px;
-        border-radius: 10px;
-        background: conic-gradient(rgba(255,255,255,0.9), rgba(255,255,255,0.25) 40%, transparent 120deg);
-        pointer-events: none;
-        animation: wb-run-spin 1s linear infinite;
-        mix-blend-mode: overlay;
-      }
-      @keyframes wb-run-spin { to { transform: rotate(360deg) } }
-    `
-    document.head.appendChild(style)
-  }, [])
+  // Node state styles (running / success / error)
+  useNodeStateStyles()
 
   const [scale, setScale] = useState<number>(initialScale)
   const [translate, setTranslate] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -95,28 +70,28 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
   const saveTimeoutRef = useRef<number | null>(null)
   const needsSaveRef = useRef(false)
   const scheduleSave = async (immediate = false): Promise<void> => {
-    const cb = (rest as any).onRequestSave as ((s: BoardSnapshot) => any) | undefined
+    const cb = onRequestSave
     if (!cb) return
     try {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current)
         saveTimeoutRef.current = null
       }
-    } catch {}
+  } catch (e) { console.debug('scheduleSave clearTimeout error', e) }
     const run = async () => {
       try {
         const snap: BoardSnapshot = { elements, connections, scale, translate }
         const res = cb(snap)
-        if (res && typeof (res as any).then === 'function') {
+        if (res && typeof (res as Promise<void>).then === 'function') {
           await res
         }
-      } catch {}
+      } catch (e) { console.debug('run save callback error', e) }
     }
     if (immediate) {
       await run()
       return
     }
-    // short debounce to coalesce rapid mutations
+  // short debounce to coalesce rapid mutations
     // (use 250ms to be responsive but avoid spamming the backend)
     // store numeric id for window.setTimeout
     // @ts-ignore
@@ -133,9 +108,9 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
 
   const BASE_CELL = 32
 
-  const uid = () => `e_${Date.now().toString(36)}_${Math.floor(Math.random() * 10000)}`
+  const uidLocal = uid
 
-  const updateElementMeta = (id: string, meta: Record<string, any>) => {
+  const updateElementMeta = (id: string, meta: Record<string, unknown>) => {
     pushHistory()
     setElements((arr) => arr.map((it) => (it.id === id ? { ...it, meta: { ...(it.meta || {}), ...(meta || {}) } } : it)))
     needsSaveRef.current = true
@@ -143,7 +118,7 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
 
   // apply initialBoard when provided
   useEffect(() => {
-    const ib = (rest as any).initialBoard as BoardSnapshot | undefined | null
+    const ib = initialBoard as BoardSnapshot | undefined | null
     if (!ib) return
     setElements(ib.elements || [])
     // sanitize connections: ensure a given output (from.nodeId+from.portId) appears at most once
@@ -158,14 +133,15 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
         sanitized.push(c)
       }
       setConnections(sanitized)
-    } catch {
+    } catch (e) {
+      console.debug('initialBoard sanitize failure', e)
       setConnections(ib.connections || [])
     }
     setScale(ib.scale || initialScale)
     setTranslate(ib.translate || { x: 0, y: 0 })
     // clear history on load
     historyRef.current.stack = []
-  }, [(rest as any).initialBoard])
+  }, [initialBoard, initialScale])
 
   // NOTE: saving is now event-driven. Call `scheduleSave()` at mutation points.
   useEffect(() => {
@@ -183,7 +159,7 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
           clearTimeout(saveTimeoutRef.current)
           saveTimeoutRef.current = null
         }
-      } catch {}
+      } catch (e) { console.debug('scheduleSave clear error', e) }
     }
   }, [])
 
@@ -201,7 +177,7 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
       const snap = elements.map((e) => ({ ...e }))
       historyRef.current.stack.push(snap)
       if (historyRef.current.stack.length > 100) historyRef.current.stack.shift()
-    } catch {}
+  } catch (e) { console.debug('flush save on unmount error', e) }
   }
 
   const undo = () => {
@@ -215,7 +191,7 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
 
   const addElement = (type: WBElementType, x: number, y: number, meta?: Record<string, any>) => {
     pushHistory()
-    setElements((s) => [...s, { id: uid(), type, x, y, meta }])
+  setElements((s) => [...s, { id: uidLocal(), type, x, y, meta }])
     needsSaveRef.current = true
   }
 
@@ -524,7 +500,7 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
   const nodeRegistry = centralNodeRegistry
 
   // publish mode - if builderId provided, read local storage key to determine if publish mode enabled
-  const builderId = (rest as any).builderId as string | undefined
+  // `builderId` is received from props
   const [publishMode, setPublishMode] = useState<boolean>(false)
 
   // initialize publish mode from backend when running under Tauri; otherwise fallback to localStorage
@@ -834,7 +810,7 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
     const mapping: Record<string, string> = {}
     const first = clip.elements[0]
     const pasted: WBElement[] = clip.elements.map((c) => {
-      const newid = uid()
+    const newid = uidLocal()
       mapping[c.id] = newid
       return { id: newid, type: c.type, x: base.x + (c.x - first.x) + offset, y: base.y + (c.y - first.y) + offset, meta: c.meta ? { ...c.meta } : undefined }
     })
@@ -932,162 +908,27 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
       <div className="absolute inset-0" style={{ transform: `translate(${translate.x}px, ${translate.y}px) scale(${scale})`, transformOrigin: '0 0', willChange: 'transform' }}>
         <div style={{ position: 'relative', width: 100000, height: 100000 }}>
           {/* node elements are rendered inside this transformed area */}
-          {elements.map((el) => {
-            const isSelected = selectedIds.includes(el.id)
-            const nodeId = el.meta && (el.meta as any)._nodeId
-            const commonProps = {
-              onPointerDown: (ev: any) => {
-                if (activeTool !== 'pointer') {
-                  return
-                }
-                ev.stopPropagation(); ev.preventDefault()
-                const wasSelected = selectedIds.includes(el.id)
-                let newSelection: string[]
-                const modifier = !!(ev.shiftKey || ev.ctrlKey || ev.metaKey)
-                if (modifier) {
-                  newSelection = wasSelected ? selectedIds.filter((id) => id !== el.id) : [...selectedIds, el.id]
-                } else {
-                  if (wasSelected && selectedIds.length > 1) {
-                    newSelection = selectedIds
-                  } else {
-                    newSelection = [el.id]
-                  }
-                }
-                setSelectedIds(newSelection)
-                pointerDownRef.current = { id: el.id, time: Date.now(), startX: ev.clientX, startY: ev.clientY, selectionAtDown: newSelection, modifier }
-                ;(ev.currentTarget as Element).setPointerCapture?.(ev.pointerId)
-              },
-              onDoubleClick: () => { console.log(getNodeConfig(el.id)); if (activeTool === 'pointer' && getNodeConfig(el.id) !== null) setConfigNodeId(el.id) },
-              style: {
-                position: 'absolute' as const, left: el.x, top: el.y, transform: 'translate(-50%, -50%)', pointerEvents: activeTool === 'hand' ? 'none' : 'auto', zIndex: isSelected ? 50 : undefined, cursor: activeTool === 'hand' ? 'default' : 'grab'
-              }
-            }
-
-            if (nodeId) {
-              const Comp: any = getNodeComponent(nodeId)
-              const nodeEntry = nodeRegistry.find((n) => n.id === nodeId)
-              const lastStatus = (el.meta && (el.meta as any).lastRunStatus) || null
-              const isRunningEl = runningId === el.id
-              const isPortSelected = (() => {
-                try {
-                  const cur = connectingRef.current
-                  if (!cur) return false
-                  if (cur.fromNode === el.id) return true
-                  // if hovering over a target input we can detect by comparing cursorScreen -> element under cursor,
-                  // but simpler: if toScreen exists and the element is a possible target for the connection, leave false
-                  return false
-                } catch { return false }
-              })()
-
-              const hasActivePortMeta = !!((el.meta && (el.meta as any).activePortId) || (el.meta && (el.meta as any).activePortKind))
-              const wrapperClass = `node-wrapper ${isRunningEl ? 'node--running' : ''} ${(lastStatus === 'success' && hasActivePortMeta) ? 'node--success' : ''} ${lastStatus === 'error' ? 'node--error' : ''} ${isSelected ? 'node--selected' : ''} ${isPortSelected ? 'node--port-selected' : ''}`
-
-              return (
-                <div key={el.id} className={wrapperClass} {...commonProps as any}>
-                  {/* Launch button for trigger nodes: positioned above the node with a small gap (~4px) */}
-                  {nodeEntry && nodeEntry.nodeType === NodeType.Trigger && (
-                    <button
-                      title="Run preview"
-                      onPointerDown={(ev) => { ev.stopPropagation(); ev.preventDefault(); }}
-                      onClick={async (ev) => {
-                        ev.stopPropagation()
-                        try {
-                          if (!nodeEntry || !nodeEntry.execute) {
-                            console.warn('No executor for node', nodeId)
-                            return
-                          }
-                          // delegate execution to centralized runtime and propagate to downstream nodes
-                              console.debug('[Whiteboard] run preview: element', el.id, 'connections', connections.filter((c) => c.from.nodeId === el.id))
-                              const res = await runAndPropagate(
-                            el.id,
-                            nodeEntry.id,
-                            nodeEntry.execute,
-                            undefined,
-                            el.meta || {},
-                            {},
-                            // getOutgoing: find connections that originate from this element
-                            (elId: string) => connections.filter((c) => c.from.nodeId === elId).map((c) => ({ fromPortId: c.from.portId, targetElementId: c.to.nodeId, targetPortId: c.to.portId })),
-                            // resolveTarget: find target element and its executor/meta
-                            (targetElementId: string) => {
-                              const tgt = elements.find((ee) => ee.id === targetElementId)
-                              if (!tgt) return null
-                              const nid = (tgt.meta as any)?._nodeId
-                              if (!nid) return null
-                              const entry = nodeRegistry.find((n) => n.id === nid)
-                              if (!entry || !entry.execute) return null
-                              return { executor: entry.execute, nodeId: entry.id, meta: tgt.meta }
-                            },
-                            // mapResultToInput: default to passing output as input to next node
-                            (resultOutput: any) => resultOutput
-                          )
-                          console.debug('[Whiteboard] run preview finished for', el.id, 'result', res)
-                        } catch (err) {
-                          console.error('Error running node preview', err)
-                        }
-                      }}
-                      style={{
-                        position: 'absolute',
-                        left: '50%',
-                        bottom: '100%',
-                        transform: 'translateX(-50%)',
-                        marginBottom: 4,
-                        zIndex: 80,
-                        padding: '4px 8px',
-                        fontSize: 12,
-                        borderRadius: 6,
-                        border: '1px solid rgba(0,0,0,0.1)',
-                        background: runningId === el.id ? 'rgba(14,165,233,0.12)' : 'rgba(255,255,255,0.04)',
-                        color: 'inherit',
-                        cursor: runningId === el.id ? 'wait' : 'pointer'
-                      }}
-                    >
-                      {runningId === el.id ? 'Running...' : <IconPlayerPlay />}
-                    </button>
-                  )}
-
-                  <Comp id={el.id} meta={el.meta} selected={isSelected} onMetaChange={(m: any) => updateElementMeta(el.id, m)} activePortId={(el.meta && (el.meta as any).activePortId) || null} activePortKind={(el.meta && (el.meta as any).activePortKind) || null} />
-                </div>
-              )
-            }
-          })}
+          <NodesRenderer
+            elements={elements}
+            elementsAll={elements}
+            selectedIds={selectedIds}
+            activeTool={activeTool}
+            nodeRegistry={nodeRegistry as any}
+            connections={connections}
+            runningId={runningId}
+            updateElementMeta={updateElementMeta}
+            setSelectedIds={setSelectedIds}
+            setConfigNodeId={setConfigNodeId}
+            runAndPropagate={runAndPropagate}
+            getNodeComponent={getNodeComponent}
+            pointerDownRef={pointerDownRef}
+          />
           <div style={{ width: '100%', height: '100%' }} />
         </div>
       </div>
 
       {/* connections SVG placed on top of everything in screen coordinates so it always covers full container */}
-      <svg className="absolute inset-0" style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
-        {connections.map((c, i) => {
-          try {
-            const fromEl = document.querySelector(`[data-node-id="${c.from.nodeId}"][data-port-id="${c.from.portId}"]`) as HTMLElement | null
-            const toEl = document.querySelector(`[data-node-id="${c.to.nodeId}"][data-port-id="${c.to.portId}"]`) as HTMLElement | null
-            if (!fromEl || !toEl) return null
-            const crect = containerRef.current!.getBoundingClientRect()
-            const frect = fromEl.getBoundingClientRect()
-            const trect = toEl.getBoundingClientRect()
-            // use screen coords relative to container (no transform)
-            const fx = frect.left + frect.width / 2 - crect.left
-            const fy = frect.top + frect.height / 2 - crect.top
-            const tx = trect.left + trect.width / 2 - crect.left
-            const ty = trect.top + trect.height / 2 - crect.top
-            return <line key={i} x1={fx} y1={fy} x2={tx} y2={ty} stroke="#ffffff" strokeWidth={1} strokeOpacity={0.9} />
-          } catch { return null }
-        })}
-        {connectingRef.current && (() => {
-          try {
-            const cur = connectingRef.current
-            if (!cur) return null
-            const crect = containerRef.current!.getBoundingClientRect()
-            const fromEl = document.querySelector(`[data-node-id="${cur.fromNode}"][data-port-id="${cur.fromPort}"]`) as HTMLElement | null
-            if (!fromEl || !cur.toScreen) return null
-            const frect = fromEl.getBoundingClientRect()
-            const fx = frect.left + frect.width / 2 - crect.left
-            const fy = frect.top + frect.height / 2 - crect.top
-            const tx = cur.toScreen.x
-            const ty = cur.toScreen.y
-            return <line x1={fx} y1={fy} x2={tx} y2={ty} stroke="#0ea5e9" strokeDasharray="4 2" strokeWidth={1} />
-          } catch { return null }
-        })()}
-      </svg>
+      <ConnectionsSVG containerRef={containerRef} connections={connections} connectingRef={connectingRef as any} />
       {/* Toolbar: tools with divider between each item. IconPointer selected by default */}
       <div className='fixed mx-auto left-0 right-0 bottom-2 w-max z-50 px-2 py-1 rounded-md bg-main-view-fg/6 text-main-view-fg text-sm select-none shadow-md flex items-center'>
         {(() => {

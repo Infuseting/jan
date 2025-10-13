@@ -206,7 +206,7 @@ pub async fn upsert_builder_board<R: Runtime>(app_handle: AppHandle<R>, payload:
 
 #[tauri::command]
 pub async fn list_builders<R: Runtime>(app_handle: AppHandle<R>) -> Result<Vec<serde_json::Value>, String> {
-    let mut dir = get_builders_dir(app_handle);
+    let dir = get_builders_dir(app_handle);
     if !dir.exists() {
         info!("list_builders: builders dir does not exist, creating: {}", dir.display());
         fs::create_dir_all(&dir).map_err(|e| { error!("list_builders: failed to create {}: {}", dir.display(), e); e.to_string() })?;
