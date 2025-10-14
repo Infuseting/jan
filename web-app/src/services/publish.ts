@@ -80,6 +80,34 @@ export async function setBuilderPublish(builderId: string, publish: boolean): Pr
 }
 
 export async function upsertBuilderBoard(builderId: string, board: string): Promise<void> {
+  // sanitize incoming board JSON string to remove ephemeral runtime fields that must not be persisted
+  function sanitizeBoardString(rawBoard: string): string {
+    try {
+      const parsed = JSON.parse(rawBoard)
+      if (parsed && Array.isArray(parsed.elements)) {
+        parsed.elements = parsed.elements.map((el: any) => {
+          if (el && el.meta && typeof el.meta === 'object') {
+            const meta = { ...el.meta }
+            // remove lastRun* and activePort* fields
+            delete meta.lastRunStatus
+            delete meta.lastRunAt
+            delete meta.lastRunResult
+            delete meta.lastRunError
+            delete meta.activePortId
+            delete meta.activePortKind
+            return { ...el, meta }
+          }
+          return el
+        })
+      }
+      return JSON.stringify(parsed)
+    } catch (e) {
+      // if parsing fails, return original (avoid data loss) and log
+      console.warn('[publish] sanitizeBoardString: failed to parse board, skipping sanitization', e)
+      return rawBoard
+    }
+  }
+
   if (isPlatformTauri()) {
     const deadline = Date.now() + 5000
     while (!isServiceHubInitialized() && Date.now() < deadline) {
@@ -87,10 +115,12 @@ export async function upsertBuilderBoard(builderId: string, board: string): Prom
       await new Promise((r) => setTimeout(r, 100))
     }
     try {
-      console.info(`[publish] upsertBuilderBoard: builder=${builderId} size=${board.length} snippet=${board.slice(0,256).replace(/\n/g, '\\n')}`)
+      // sanitize before logging/persisting
+      const sanitized = sanitizeBoardString(board)
+      console.info(`[publish] upsertBuilderBoard: builder=${builderId} size=${sanitized.length} snippet=${sanitized.slice(0,256).replace(/\n/g, '\\n')}`)
       // small debug: log client intent to native side so we can confirm invocation
-  try { await getServiceHub().core().invoke('client_invoke_log', { message: `upsert_builder_board builder=${builderId} size=${board.length}` }) } catch {}
-  await getServiceHub().core().invoke('upsert_builder_board', { payload: { builderId: builderId, board } })
+  try { await getServiceHub().core().invoke('client_invoke_log', { message: `upsert_builder_board builder=${builderId} size=${sanitized.length}` }) } catch {}
+  await getServiceHub().core().invoke('upsert_builder_board', { payload: { builderId: builderId, board: sanitized } })
       console.info(`[publish] upsertBuilderBoard: succeeded builder=${builderId}`)
       return
     } catch (err) {
@@ -98,7 +128,13 @@ export async function upsertBuilderBoard(builderId: string, board: string): Prom
       throw err
     }
   }
-  localStorage.setItem(`builder:${builderId}:board`, board);
+  try {
+    const sanitized = sanitizeBoardString(board)
+    localStorage.setItem(`builder:${builderId}:board`, sanitized)
+  } catch (e) {
+    // fallback: store raw board if sanitization fails
+    localStorage.setItem(`builder:${builderId}:board`, board)
+  }
 }
 
 export async function saveBuilderMetadata(builderId: string, name: string, updatedAt?: number): Promise<void> {
@@ -131,5 +167,35 @@ export async function saveBuilderMetadata(builderId: string, name: string, updat
     }
   } catch (e) {
     // best-effort
+  }
+}
+
+// Append a log entry for a builder execution. If running in Tauri, invoke native to append a file; otherwise persist to localStorage as JSON array.
+export async function appendBuilderLog(builderId: string, executionId: string, message: string): Promise<void> {
+  const timestamp = Date.now()
+  if (isPlatformTauri()) {
+    const deadline = Date.now() + 5000
+    while (!isServiceHubInitialized() && Date.now() < deadline) {
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    try {
+      // best-effort native append; native side may implement 'append_builder_log'
+      await getServiceHub().core().invoke('append_builder_log', { builderId, executionId, timestamp, message })
+      return
+    } catch (err) {
+      // fallback to localStorage below
+      console.warn('[publish] appendBuilderLog native invoke failed, falling back to localStorage', err)
+    }
+  }
+
+  try {
+    const key = `builder:${builderId}:log:${executionId}`
+    const raw = localStorage.getItem(key)
+    const arr = raw ? JSON.parse(raw) : []
+    arr.push({ timestamp, message })
+    localStorage.setItem(key, JSON.stringify(arr))
+  } catch (e) {
+    console.error('[publish] appendBuilderLog fallback failed', e)
   }
 }

@@ -1,4 +1,5 @@
 import { IconPlayerPlay } from '@tabler/icons-react'
+import { v4 as uuidv4 } from 'uuid'
 import { NodeType } from '@/lib/node'
 
 type Props = {
@@ -15,9 +16,10 @@ type Props = {
   getNodeComponent: (nodeId: string) => any
   elementsAll: any[]
   pointerDownRef?: { current: null | { id: string; time: number; startX: number; startY: number; selectionAtDown: string[]; modifier: boolean } }
+  ephemeralLastRuns?: Record<string, any>
 }
 
-export default function NodesRenderer({ elements, elementsAll, selectedIds, activeTool, nodeRegistry, connections, runningId, updateElementMeta, setSelectedIds, setConfigNodeId, runAndPropagate, getNodeComponent, pointerDownRef }: Props) {
+export default function NodesRenderer({ elements, elementsAll, selectedIds, activeTool, nodeRegistry, connections, runningId, updateElementMeta, setSelectedIds, setConfigNodeId, runAndPropagate, getNodeComponent, pointerDownRef, ephemeralLastRuns }: Props) {
   return (
     <>
       {elements.map((el) => {
@@ -41,7 +43,8 @@ export default function NodesRenderer({ elements, elementsAll, selectedIds, acti
             }
             setSelectedIds(newSelection)
             // set parent pointerDownRef so Whiteboard can detect start-of-drag
-            try {
+                      try {
+                        const executionIdPreview = uuidv4()
               if (pointerDownRef) {
                 pointerDownRef.current = { id: el.id, time: Date.now(), startX: ev.clientX, startY: ev.clientY, selectionAtDown: newSelection, modifier }
               }
@@ -55,7 +58,8 @@ export default function NodesRenderer({ elements, elementsAll, selectedIds, acti
         if (nodeId) {
           const Comp: any = getNodeComponent(nodeId)
           const nodeEntry = nodeRegistry.find((n) => n.id === nodeId)
-          const lastStatus = (el.meta && (el.meta as any).lastRunStatus) || null
+          // prefer ephemeral (in-memory) last-run info; fall back to persisted meta if present
+          const lastStatus = (ephemeralLastRuns && ephemeralLastRuns[el.id] && ephemeralLastRuns[el.id].lastRunStatus) || (el.meta && (el.meta as any).lastRunStatus) || null
           const isRunningEl = runningId === el.id
 
           const hasActivePortMeta = !!((el.meta && (el.meta as any).activePortId) || (el.meta && (el.meta as any).activePortKind))
@@ -78,7 +82,7 @@ export default function NodesRenderer({ elements, elementsAll, selectedIds, acti
                         nodeEntry.execute,
                         undefined,
                         el.meta || {},
-                        {},
+                        { executionId: executionIdPreview },
                         (elId: string) => connections.filter((c) => c.from.nodeId === elId).map((c) => ({ fromPortId: c.from.portId, targetElementId: c.to.nodeId, targetPortId: c.to.portId })),
                         (targetElementId: string) => {
                           const tgt = elementsAll.find((ee) => ee.id === targetElementId)

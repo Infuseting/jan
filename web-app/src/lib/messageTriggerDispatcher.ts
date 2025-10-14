@@ -1,11 +1,26 @@
 import { getServiceHub, isServiceHubInitialized } from '@/hooks/useServiceHub'
 import { nodeRegistry } from '@/containers/node/nodeRegistry'
-import { runAndPropagate } from '@/lib/nodeExecution'
+import { runAndPropagate, onStart as onExecStart, onFinish as onExecFinish, onError as onExecError } from '@/lib/nodeExecution'
+import { appendBuilderLog } from '@/services/publish'
+import { v4 as uuidv4 } from 'uuid'
 import { getBuilderBoard } from '@/services/publish'
 import { useThreads } from '@/hooks/useThreads'
 
 // Listen to 'message:created' events and dispatch matching published builder triggers
+const GLOBAL_FLAG = '__jan_messageTriggerDispatcherStarted_v1'
+
 export async function startMessageTriggerDispatcher() {
+  try {
+    // use a global flag so HMR / module reloads do not re-register listeners
+    const g: any = (globalThis as any)
+    if (g[GLOBAL_FLAG]) {
+      console.info('[messageTriggerDispatcher] already started (global flag); skipping duplicate start')
+      return
+    }
+    g[GLOBAL_FLAG] = true
+  } catch (e) {
+    // ignore and continue; best-effort
+  }
   try {
     console.info('[messageTriggerDispatcher] start requested — ensuring ServiceHub is initialized')
     // wait for service hub initialization (avoid race on app startup)
@@ -21,11 +36,30 @@ export async function startMessageTriggerDispatcher() {
     }
     const hub = getServiceHub()
     console.info('[messageTriggerDispatcher] starting, registering listener for message:created')
-  hub.events().listen('message:created', async (evt: any) => {
+    // register message created listener and store unsubscribe handle on globalThis
+    const g: any = (globalThis as any)
+
+    // simple dedupe caches to avoid double-processing identical events
+    const recentMessages = new Map<string, number>() // id -> expiryTs
+    const recentThreads = new Map<string, number>()
+    const DEDUPE_TTL = 60 * 1000 // 60 seconds
+
+    const unsubMsg = await hub.events().listen('message:created', async (evt: any) => {
         console.info('[messageTriggerDispatcher] received event from hub.listen (handler entry)')
         console.debug('[messageTriggerDispatcher] raw event object:', evt)
       try {
         const msg = evt.payload
+        // dedupe by message id if present
+        const msgId = msg && (msg.id || msg.message_id || msg.messageId)
+        if (msgId) {
+          const now = Date.now()
+          const ex = recentMessages.get(msgId)
+          if (ex && ex > now) {
+            console.info('[messageTriggerDispatcher] duplicate message event ignored', msgId)
+            return
+          }
+          recentMessages.set(msgId, now + DEDUPE_TTL)
+        }
         console.info('[messageTriggerDispatcher] event payload extracted')
         console.debug('[messageTriggerDispatcher] message payload:', msg)
         if (!msg || !msg.thread_id) {
@@ -125,6 +159,13 @@ export async function startMessageTriggerDispatcher() {
                 // run and propagate with message payload as input
                 ;(async () => {
                   console.info('[messageTriggerDispatcher] calling runAndPropagate for element', el.id)
+                  const executionId = uuidv4()
+                  // append log entry about start
+                  try { await appendBuilderLog(builderId, executionId, `start execution element=${el.id} node=${entry.id}`) } catch {}
+                  // subscribe to lifecycle events for this element to capture logs
+                  const unsubStart = onExecStart(({ elementId }) => { if (elementId === el.id) { void appendBuilderLog(builderId, executionId, `started element=${elementId}`) } })
+                  const unsubFinish = onExecFinish(({ elementId, result }) => { if (elementId === el.id) { void appendBuilderLog(builderId, executionId, `finished element=${elementId} result=${JSON.stringify(result)}`) } })
+                  const unsubError = onExecError(({ elementId, error }) => { if (elementId === el.id) { void appendBuilderLog(builderId, executionId, `error element=${elementId} error=${String(error)}`) } })
                   try {
                     await runAndPropagate(
                       el.id,
@@ -132,14 +173,18 @@ export async function startMessageTriggerDispatcher() {
                       entry.execute as any,
                       { message: msg },
                       el.meta || {},
-                      {},
+                      { builderId, executionId },
                       getOutgoing,
                       resolveTarget,
                       (r: any) => r
                     )
                     console.info('[messageTriggerDispatcher] runAndPropagate finished for element', el.id)
+                    try { await appendBuilderLog(builderId, executionId, `runAndPropagate finished element=${el.id}`) } catch {}
                   } catch (e) {
                     console.error('[messageTriggerDispatcher] runAndPropagate error for element', el.id, e)
+                    try { await appendBuilderLog(builderId, executionId, `runAndPropagate error element=${el.id} error=${String(e)}`) } catch {}
+                  } finally {
+                    unsubStart(); unsubFinish(); unsubError();
                   }
                 })()
 
@@ -150,14 +195,43 @@ export async function startMessageTriggerDispatcher() {
         }
 
       } catch (e) { console.error('[messageTriggerDispatcher] handler error', e) }
-    }).catch((e: any) => { console.error('[messageTriggerDispatcher] listen failed', e) })
+      })
+      if (unsubMsg) {
+        try { g.__jan_unsub_message_created = unsubMsg } catch {}
+      }
+    // garbage collect old dedupe entries periodically
+    const gcInterval = setInterval(() => {
+      const now = Date.now()
+      for (const [k, v] of recentMessages) if (v <= now) recentMessages.delete(k)
+      for (const [k, v] of recentThreads) if (v <= now) recentThreads.delete(k)
+    }, 5000)
+
+    try {
+      if (unsubMsg) {
+        try { g.__jan_unsub_message_created = unsubMsg } catch {}
+      }
+    } catch (e) {
+      console.error('[messageTriggerDispatcher] listen failed for message:created', e)
+    }
     // Register listener for thread creation triggers
     console.info('[messageTriggerDispatcher] registering listener for thread:created')
-    hub.events().listen('thread:created', async (evt: any) => {
+    try {
+      const unsubThread = await hub.events().listen('thread:created', async (evt: any) => {
       console.info('[messageTriggerDispatcher] thread:created event received')
       console.debug('[messageTriggerDispatcher] raw thread event:', evt)
       try {
         const thread = evt.payload
+        // dedupe by thread id
+        const threadId = thread && (thread.id || thread.thread_id || thread.threadId)
+        if (threadId) {
+          const now = Date.now()
+          const ex = recentThreads.get(threadId)
+          if (ex && ex > now) {
+            console.info('[messageTriggerDispatcher] duplicate thread event ignored', threadId)
+            return
+          }
+          recentThreads.set(threadId, now + DEDUPE_TTL)
+        }
         if (!thread || !thread.id) {
           console.info('[messageTriggerDispatcher] skipping thread event: missing payload or id')
           return
@@ -221,20 +295,31 @@ export async function startMessageTriggerDispatcher() {
 
                 ;(async () => {
                   try {
-                    await runAndPropagate(
-                      el.id,
-                      entry.id,
-                      entry.execute as any,
-                      { thread },
-                      el.meta || {},
-                      {},
-                      getOutgoing,
-                      resolveTarget,
-                      (r: any) => r
-                    )
-                  } catch (e) {
-                    console.error('[messageTriggerDispatcher] runAndPropagate error for thread-created element', el.id, e)
-                  }
+                    const executionId = uuidv4()
+                    try { await appendBuilderLog(builderId, executionId, `start execution element=${el.id} node=${entry.id}`) } catch {}
+                    const unsubStart = onExecStart(({ elementId }) => { if (elementId === el.id) { void appendBuilderLog(builderId, executionId, `started element=${elementId}`) } })
+                    const unsubFinish = onExecFinish(({ elementId, result }) => { if (elementId === el.id) { void appendBuilderLog(builderId, executionId, `finished element=${elementId} result=${JSON.stringify(result)}`) } })
+                    const unsubError = onExecError(({ elementId, error }) => { if (elementId === el.id) { void appendBuilderLog(builderId, executionId, `error element=${elementId} error=${String(error)}`) } })
+                    try {
+                      await runAndPropagate(
+                        el.id,
+                        entry.id,
+                        entry.execute as any,
+                        { thread },
+                        el.meta || {},
+                        { builderId, executionId },
+                        getOutgoing,
+                        resolveTarget,
+                        (r: any) => r
+                      )
+                      try { await appendBuilderLog(builderId, executionId, `runAndPropagate finished element=${el.id}`) } catch {}
+                    } catch (e) {
+                      console.error('[messageTriggerDispatcher] runAndPropagate error for thread-created element', el.id, e)
+                      try { await appendBuilderLog(builderId, executionId, `runAndPropagate error element=${el.id} error=${String(e)}`) } catch {}
+                    } finally {
+                      unsubStart(); unsubFinish(); unsubError();
+                    }
+                  } catch (e) { console.error('[messageTriggerDispatcher] thread runAndPropagate wrapper error', e) }
                 })()
 
               } catch (e) { console.error('[messageTriggerDispatcher] thread trigger element error', e) }
@@ -244,7 +329,15 @@ export async function startMessageTriggerDispatcher() {
         }
 
       } catch (e) { console.error('[messageTriggerDispatcher] thread handler error', e) }
-    }).catch((e: any) => { console.error('[messageTriggerDispatcher] listen failed for thread:created', e) })
+      })
+      if (unsubThread) {
+        try { g.__jan_unsub_thread_created = unsubThread } catch {}
+      }
+      // ensure gc is cleared when dispatcher stops - stash on globalThis for later cleanup if needed
+      try { g.__jan_messageTriggerDispatcher_gc = () => clearInterval(gcInterval) } catch {}
+    } catch (e) {
+      console.error('[messageTriggerDispatcher] listen failed for thread:created', e)
+    }
   } catch (e) { console.error('[messageTriggerDispatcher] startup failed', e) }
 }
 

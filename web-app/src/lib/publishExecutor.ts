@@ -45,22 +45,24 @@ export async function handlePublishTrigger(builderId: string, triggerId: string)
       return { executor: e.execute as any, nodeId: e.id, meta: tgt.meta }
     }
 
-    console.info('[publishExecutor] executing trigger', triggerId, 'for builder', builderId)
+  console.info('[publishExecutor] executing trigger', triggerId, 'for builder', builderId)
     // attach temporary listeners to capture the executor result and forward to backend logs
     let finishUnsub = () => {}
     let errorUnsub = () => {}
-    try {
-      finishUnsub = onFinish(({ elementId, result }) => {
+      try {
+      // generate an execution id for this run so concurrent runs are distinct
+      const executionId = require('uuid').v4()
+      finishUnsub = onFinish(({ elementId, result, executionId: evId }) => {
         if (elementId !== el.id) return
         try {
-          const msg = JSON.stringify({ type: 'finish', builderId, triggerId, elementId, result: (result === undefined ? null : result) })
+          const msg = JSON.stringify({ type: 'finish', builderId, triggerId, elementId, executionId: evId, result: (result === undefined ? null : result) })
           getServiceHub().core().invoke('client_invoke_log', { message: `[publishExecutor] ${msg}` }).catch(() => {})
         } catch (e) {}
       })
-      errorUnsub = onError(({ elementId, error }) => {
+      errorUnsub = onError(({ elementId, error, executionId: evId }) => {
         if (elementId !== el.id) return
         try {
-          const msg = JSON.stringify({ type: 'error', builderId, triggerId, elementId, error: String(error) })
+          const msg = JSON.stringify({ type: 'error', builderId, triggerId, elementId, executionId: evId, error: String(error) })
           getServiceHub().core().invoke('client_invoke_log', { message: `[publishExecutor] ${msg}` }).catch(() => {})
         } catch (e) {}
       })
@@ -71,7 +73,7 @@ export async function handlePublishTrigger(builderId: string, triggerId: string)
         entry.execute as any,
         undefined,
         el.meta || {},
-        {},
+        { executionId },
         getOutgoing,
         resolveTarget,
         (resultOutput: any) => resultOutput

@@ -22,6 +22,7 @@ export type RunEventPayload = {
   nodeId?: string
   result?: any
   error?: any
+  executionId?: string
 }
 
 // standard executor return shape suggestion
@@ -57,30 +58,48 @@ class Emitter {
 
 const emitter = new Emitter()
 
-// currently running elementIds -> AbortController
-const runningControllers = new Map<string, AbortController>()
+// currently running elementIds -> (executionId -> AbortController)
+// This allows multiple concurrent executions for the same element as long as
+// each execution has a distinct executionId set in the ctx passed to
+// runExecutorForElement. If no executionId is provided, a default id is used
+// to preserve previous single-run semantics.
+const runningControllers = new Map<string, Map<string, AbortController>>()
 
 /**
  * Return true if the element is currently executing.
  */
 export function isRunning(elementId: string) {
-  return runningControllers.has(elementId)
+  const map = runningControllers.get(elementId)
+  return !!(map && map.size > 0)
 }
 
 /**
  * Stop/cancel execution for an element (if running). This triggers an abort
  * on the signal that will be passed to the executor (if it uses it).
  */
-export function stop(elementId: string) {
-  const ctrl = runningControllers.get(elementId)
-  if (!ctrl) return false
+export function stop(elementId: string, executionId?: string) {
+  const map = runningControllers.get(elementId)
+  if (!map) return false
+
   try {
-    console.debug('[nodeExecution] stop: aborting element', elementId)
-    ctrl.abort()
+    if (executionId) {
+      const ctrl = map.get(executionId)
+      if (!ctrl) return false
+      console.debug('[nodeExecution] stop: aborting element', elementId, executionId)
+      ctrl.abort()
+      map.delete(executionId)
+    } else {
+      // abort all executions for this element
+      console.debug('[nodeExecution] stop: aborting all executions for element', elementId)
+      for (const ctrl of Array.from(map.values())) {
+        try { ctrl.abort() } catch (e) { /* swallow per-controller errors */ }
+      }
+      runningControllers.delete(elementId)
+    }
   } catch (e) {
     console.error('[nodeExecution] stop: abort error for', elementId, e)
   }
-  runningControllers.delete(elementId)
+
   emitter.emit('cancel', { elementId })
   console.info('[nodeExecution] stop: emitted cancel for', elementId)
   return true
@@ -104,17 +123,28 @@ export async function runExecutorForElement(
   ctx?: Record<string, any>
 ) {
   if (!elementId) throw new Error('elementId required')
-  if (runningControllers.has(elementId)) {
-    throw new Error(`element ${elementId} is already running`)
+
+  // allow callers to scope executions via an executionId in ctx so multiple
+  // triggers can execute the same element concurrently. If absent, fall back
+  // to a default id to preserve old single-run behavior per element.
+  const executionId = (ctx && typeof ctx.executionId === 'string') ? ctx.executionId : '__default__'
+
+  const existingMap = runningControllers.get(elementId)
+  if (existingMap && existingMap.has(executionId)) {
+    throw new Error(`element ${elementId} is already running for executionId ${executionId}`)
   }
 
   const controller = new AbortController()
-  runningControllers.set(elementId, controller)
+  if (existingMap) {
+    existingMap.set(executionId, controller)
+  } else {
+    runningControllers.set(elementId, new Map([[executionId, controller]]))
+  }
 
   const context = Object.assign({}, ctx || {}, { signal: controller.signal })
 
-  console.debug('[nodeExecution] runExecutorForElement: start', { elementId, nodeId })
-  emitter.emit('start', { elementId, nodeId })
+  console.debug('[nodeExecution] runExecutorForElement: start', { elementId, nodeId, executionId })
+  emitter.emit('start', { elementId, nodeId, executionId })
 
   try {
     const maybe = executor(input, meta, context)
@@ -122,20 +152,30 @@ export async function runExecutorForElement(
     const result = await Promise.resolve(maybe)
     // if execution wasn't aborted during await
     if (!controller.signal.aborted) {
-      runningControllers.delete(elementId)
-      emitter.emit('finish', { elementId, nodeId, result })
-      console.debug('[nodeExecution] runExecutorForElement: finish', { elementId, nodeId, result })
+      // remove this executionId controller
+      const map = runningControllers.get(elementId)
+      if (map) {
+        map.delete(executionId)
+        if (map.size === 0) runningControllers.delete(elementId)
+      }
+  emitter.emit('finish', { elementId, nodeId, result, executionId })
+  console.debug('[nodeExecution] runExecutorForElement: finish', { elementId, nodeId, executionId, result })
     } else {
       // aborted
-      emitter.emit('cancel', { elementId, nodeId })
-      console.info('[nodeExecution] runExecutorForElement: canceled during await', { elementId, nodeId })
+  emitter.emit('cancel', { elementId, nodeId, executionId })
+  console.info('[nodeExecution] runExecutorForElement: canceled during await', { elementId, nodeId, executionId })
     }
     return result
   } catch (err) {
-    runningControllers.delete(elementId)
-    // emit error event
-    emitter.emit('error', { elementId, nodeId, error: err })
-    console.error('[nodeExecution] runExecutorForElement: error', { elementId, nodeId, error: err })
+    // remove controller for this execution
+    const map = runningControllers.get(elementId)
+    if (map) {
+      map.delete(executionId)
+      if (map.size === 0) runningControllers.delete(elementId)
+    }
+  // emit error event
+  emitter.emit('error', { elementId, nodeId, error: err, executionId })
+  console.error('[nodeExecution] runExecutorForElement: error', { elementId, nodeId, executionId, error: err })
     throw err
   }
 }

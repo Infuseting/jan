@@ -1,6 +1,9 @@
 import NodeBase from '@/containers/NodeBase'
 import { useState, useEffect } from 'react'
 import { NodeType } from '@/lib/node'
+import SmartInput from '@/containers/SmartInput'
+import { GLOBAL_SUGGESTIONS, resolveGlobal } from '@/lib/globals'
+import { evaluateExpression } from '@/lib/expression'
 
 export default function Node({ id, selected, activePortId, activePortKind }: { id: string; selected?: boolean; activePortId?: string | null; activePortKind?: 'input' | 'output' | null }) {
   return (
@@ -33,8 +36,56 @@ const parseKeyValueLines = (raw: string) => {
 // Substitute $input.* and $meta.* tokens with values from provided samples
 const substituteTokens = (text: string, inputSample: any, metaSample: any) => {
   if (!text) return ''
-  return text.replace(/\$[a-zA-Z0-9_\.]+/g, (m) => {
-    const varName = m.substring(1)
+
+  const formatForInsert = (val: any) => {
+    if (val === null || val === undefined) return ''
+    if (val instanceof Date) return val.toISOString()
+    if (typeof val === 'string') return val
+    try { return JSON.stringify(val) } catch { return String(val) }
+  }
+
+  // match token optionally followed by a single pair of parentheses (no deep nesting in regex)
+  return text.replace(/\$[a-zA-Z0-9_\.]+(?:\([^)]*\))?/g, function (m: string) {
+    // m is the full match (token + optional paren part)
+    // extract the base token (without parentheses)
+    const tokenOnly = m.replace(/\([^)]*\)$/, '')
+    let exprToEval = m
+
+    // if there were no parentheses in the match, but the referenced property is callable,
+    // append '()' to call it before evaluation (so we consume the call and don't leave trailing parens)
+    if (!/\([^)]*\)$/.test(m)) {
+      const varName = tokenOnly.substring(1)
+      const segs = varName.split('.')
+      let baseVal: any = undefined
+      try {
+        if (segs[0] === 'input') baseVal = segs.slice(1).reduce((acc: any, s: string) => (acc && acc[s] !== undefined ? acc[s] : undefined), inputSample)
+        else if (segs[0] === 'meta') baseVal = segs.slice(1).reduce((acc: any, s: string) => (acc && acc[s] !== undefined ? acc[s] : undefined), metaSample)
+        else {
+          baseVal = segs.reduce((acc: any, s: string) => (acc && acc[s] !== undefined ? acc[s] : undefined), inputSample)
+          if (baseVal === undefined) baseVal = segs.reduce((acc: any, s: string) => (acc && acc[s] !== undefined ? acc[s] : undefined), metaSample)
+          if (baseVal === undefined) baseVal = resolveGlobal(segs[0])
+        }
+      } catch {}
+
+      // if last segment is a method and is function on baseVal's prototype/instance, call it
+      if (segs.length > 1 && baseVal !== undefined) {
+        const last = segs[segs.length - 1]
+        try {
+          const maybe = (baseVal as any)[last]
+          if (typeof maybe === 'function') {
+            exprToEval = tokenOnly + '()'
+          }
+        } catch {}
+      }
+    }
+
+    try {
+      const ev = evaluateExpression(exprToEval, inputSample, metaSample)
+      if (ev !== undefined) return formatForInsert(ev)
+    } catch {}
+
+    // fallback: resolve tokenOnly without evaluating function calls
+    const varName = tokenOnly.substring(1)
     const segs = varName.split('.')
     let val: any = undefined
     if (segs[0] === 'input') {
@@ -44,10 +95,13 @@ const substituteTokens = (text: string, inputSample: any, metaSample: any) => {
     } else {
       val = segs.reduce((acc: any, s: string) => (acc && acc[s] !== undefined ? acc[s] : undefined), inputSample)
       if (val === undefined) val = segs.reduce((acc: any, s: string) => (acc && acc[s] !== undefined ? acc[s] : undefined), metaSample)
+      if (val === undefined) {
+        const g = resolveGlobal(segs[0])
+        if (g !== undefined) val = g
+      }
     }
     if (val === undefined) return m
-    if (typeof val === 'string') return val
-    try { return JSON.stringify(val) } catch { return String(val) }
+    return formatForInsert(val)
   })
 }
 
@@ -82,7 +136,7 @@ export function NodeConfig({ meta, setMeta }: { meta?: Record<string, any>; setM
 
   const buildPreview = () => {
     const headers = parseKeyValueLines(headersRaw)
-    const paramsLines = (paramsRaw || '').split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean)
+  const paramsLines = (paramsRaw || '').split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean)
     const params: Record<string,string> = {}
     for (const p of paramsLines) {
       const idx = p.indexOf('=')
@@ -93,7 +147,7 @@ export function NodeConfig({ meta, setMeta }: { meta?: Record<string, any>; setM
     const finalUrl = (() => {
       let u = substituteTokens(url, sample, metaObj)
       // append substituted params
-      const qp = Object.entries(params).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(substituteTokens(v, sample, metaObj))}`).join('&')
+  const qp = Object.entries(params).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(substituteTokens(v, sample, metaObj))}`).join('&')
       if (qp) {
         u += (u.includes('?') ? '&' : '?') + qp
       }
@@ -114,17 +168,17 @@ export function NodeConfig({ meta, setMeta }: { meta?: Record<string, any>; setM
         <option>PATCH</option>
       </select>
 
-      <label className="text-sm font-medium">URL</label>
-      <input value={url} onChange={(e) => { setUrl(e.target.value); write({ url: e.target.value }) }} placeholder="https://api.example.com/path" className="p-2 rounded border w-full" />
+  <label className="text-sm font-medium">URL</label>
+  <SmartInput value={url} onChange={(v) => { setUrl(v); write({ url: v }) }} placeholder="https://api.example.com/path" className="" suggestionsSource={[...GLOBAL_SUGGESTIONS]} sample={sample} meta={metaObj} />
 
-      <label className="text-sm font-medium">Query params (one per line key=value)</label>
-      <textarea value={paramsRaw} onChange={(e) => { setParamsRaw(e.target.value); write({ paramsRaw: e.target.value }) }} className="p-2 rounded border w-full h-20" />
+  <label className="text-sm font-medium">Query params (one per line key=value)</label>
+  <SmartInput multiline rows={6} value={paramsRaw} onChange={(v) => { setParamsRaw(v); write({ paramsRaw: v }) }} className="" suggestionsSource={[...GLOBAL_SUGGESTIONS]} sample={sample} meta={metaObj} />
 
-      <label className="text-sm font-medium">Headers (one per line Key: Value)</label>
-      <textarea value={headersRaw} onChange={(e) => { setHeadersRaw(e.target.value); write({ headersRaw: e.target.value }) }} className="p-2 rounded border w-full h-20" />
+  <label className="text-sm font-medium">Headers (one per line Key: Value)</label>
+  <SmartInput multiline rows={6} value={headersRaw} onChange={(v) => { setHeadersRaw(v); write({ headersRaw: v }) }} className="" suggestionsSource={[...GLOBAL_SUGGESTIONS]} sample={sample} meta={metaObj} />
 
-      <label className="text-sm font-medium">Body (for POST/PUT/PATCH)</label>
-      <textarea value={body} onChange={(e) => { setBody(e.target.value); write({ body: e.target.value }) }} className="p-2 rounded border w-full h-28" />
+  <label className="text-sm font-medium">Body (for POST/PUT/PATCH)</label>
+  <SmartInput multiline rows={10} value={body} onChange={(v) => { setBody(v); write({ body: v }) }} className="" suggestionsSource={[...GLOBAL_SUGGESTIONS]} sample={sample} meta={metaObj} />
 
       <div>
         <div className="text-sm font-medium">Preview</div>
@@ -169,8 +223,8 @@ export async function execute(input?: any, meta?: Record<string, any>, context?:
   // build URL and body
   const buildUrl = () => {
     let u = substituteTokens(urlRaw, inputSample, metaSample)
-    const paramsLines = (paramsRaw || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-    const qp = paramsLines.map((p) => {
+    const paramsLines = (paramsRaw || '').split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean)
+    const qp = paramsLines.map((p: string) => {
       const idx = p.indexOf('=')
       if (idx === -1) return ''
       const k = p.substring(0, idx).trim()

@@ -67,7 +67,7 @@ function BuilderContent() {
     } catch {}
     const dataStr = JSON.stringify(payload, null, 2)
     const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr)
-    const exportFileDefaultName = `agent-${builder.name
+    const exportFileDefaultName = `agent-${(builder.name || 'unnamed')
       .toLowerCase()
       .replace(/\s+/g, '-')}.json`
     const linkElement = document.createElement('a')
@@ -195,7 +195,7 @@ function BuilderContent() {
                     const newEntry = { id: payload.id, name: payload.name || name, updated_at: payload.updated_at || Date.now() }
                     setBuilders([...(builders as any), newEntry])
                     targetId = payload.id
-                    if (isPlatformTauri()) {
+                      if (isPlatformTauri()) {
                       // persist metadata and board under the provided id on native side
                       await publishService.saveBuilderMetadata(payload.id, payload.name || name, payload.updated_at)
                       if (payload.board) {
@@ -204,7 +204,7 @@ function BuilderContent() {
                     } else {
                       // non-native: persist board and metadata locally
                       if (payload.board) {
-                        localStorage.setItem(`builder:${payload.id}:board`, JSON.stringify(payload.board))
+                        localStorage.setItem(`builder:${payload.id}:board`, JSON.stringify(sanitizeBoardObject(payload.board)))
                       }
                       await publishService.saveBuilderMetadata(payload.id, payload.name || name, payload.updated_at)
                     }
@@ -221,14 +221,14 @@ function BuilderContent() {
                 targetId = created.id
               }
               // If we haven't already persisted board/metadata for the chosen targetId, do it now
-              if (payload.board) {
+                if (payload.board) {
                 try {
                   if (isPlatformTauri()) {
                     await publishService.upsertBuilderBoard(targetId, JSON.stringify(payload.board))
                     // also save metadata for this id so it appears in publish list operations
                     await publishService.saveBuilderMetadata(targetId, payload.name || name, payload.updated_at)
                   } else {
-                    localStorage.setItem(`builder:${targetId}:board`, JSON.stringify(payload.board))
+                    localStorage.setItem(`builder:${targetId}:board`, JSON.stringify(sanitizeBoardObject(payload.board)))
                     // best-effort: persist metadata in local storage builder-management
                     await publishService.saveBuilderMetadata(targetId, payload.name || name, payload.updated_at)
                   }
@@ -421,3 +421,27 @@ function BuilderContent() {
     </div>
   )
 }
+
+  // sanitize board object to remove ephemeral runtime fields
+  function sanitizeBoardObject(boardObj: any) {
+    try {
+      if (boardObj && Array.isArray(boardObj.elements)) {
+        boardObj.elements = boardObj.elements.map((el: any) => {
+          if (el && el.meta && typeof el.meta === 'object') {
+            const meta = { ...el.meta }
+            delete meta.lastRunStatus
+            delete meta.lastRunAt
+            delete meta.lastRunResult
+            delete meta.lastRunError
+            delete meta.activePortId
+            delete meta.activePortKind
+            return { ...el, meta }
+          }
+          return el
+        })
+      }
+    } catch (e) {
+      // best-effort
+    }
+    return boardObj
+  }

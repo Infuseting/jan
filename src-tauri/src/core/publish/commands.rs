@@ -194,8 +194,35 @@ pub async fn upsert_builder_board<R: Runtime>(app_handle: AppHandle<R>, payload:
         }
     }
 
-    info!("upsert_builder_board: writing board for builder={} path={} size={} snippet=\"{}\"", builder_id, board_path.display(), board.len(), snippet.replace('\n', "\\n"));
-    match fs::write(&board_path, &board) {
+    // Sanitize incoming board JSON: remove ephemeral runtime fields from element meta
+    let sanitized_board = match serde_json::from_str::<serde_json::Value>(&board) {
+        Ok(mut v) => {
+            if let Some(elements) = v.get_mut("elements").and_then(|e| e.as_array_mut()) {
+                for el in elements.iter_mut() {
+                    if let Some(meta) = el.get_mut("meta").and_then(|m| m.as_object_mut()) {
+                        meta.remove("lastRunStatus");
+                        meta.remove("lastRunAt");
+                        meta.remove("lastRunResult");
+                        meta.remove("lastRunError");
+                        meta.remove("activePortId");
+                        meta.remove("activePortKind");
+                    }
+                }
+            }
+            match serde_json::to_string(&v) {
+                Ok(s) => s,
+                Err(_) => board.clone(),
+            }
+        }
+        Err(_) => {
+            // if parsing fails, keep original to avoid data loss
+            warn!("upsert_builder_board: incoming board is not valid JSON, skipping sanitization for builder={}", builder_id);
+            board.clone()
+        }
+    };
+
+    info!("upsert_builder_board: writing board for builder={} path={} size={} snippet=\"{}\"", builder_id, board_path.display(), sanitized_board.len(), sanitized_board.chars().take(1024).collect::<String>().replace('\n', "\\n"));
+    match fs::write(&board_path, &sanitized_board) {
         Ok(_) => Ok(()),
         Err(e) => {
             error!("upsert_builder_board: failed to write {}: {}", board_path.display(), e);

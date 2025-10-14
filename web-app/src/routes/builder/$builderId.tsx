@@ -178,15 +178,36 @@ function RouteComponent() {
             builderId={builderId}
             initialBoard={initialBoard}
             onRequestSave={async (snap: any) => {
+              // sanitize helper
+              function sanitizeBoardObject(boardObj: any) {
+                try {
+                  if (boardObj && Array.isArray(boardObj.elements)) {
+                    boardObj.elements = boardObj.elements.map((el: any) => {
+                      if (el && el.meta && typeof el.meta === 'object') {
+                        const meta = { ...el.meta }
+                        delete meta.lastRunStatus
+                        delete meta.lastRunAt
+                        delete meta.lastRunResult
+                        delete meta.lastRunError
+                        delete meta.activePortId
+                        delete meta.activePortKind
+                        return { ...el, meta }
+                      }
+                      return el
+                    })
+                  }
+                } catch (e) {}
+                return boardObj
+              }
               try {
                 const key = `builder:${builderId}:board`
                 if (isPlatformTauri()) {
                   await publishService.upsertBuilderBoard(builderId, JSON.stringify(snap))
                 } else {
-                  localStorage.setItem(key, JSON.stringify(snap))
+                  localStorage.setItem(key, JSON.stringify(sanitizeBoardObject(snap)))
                 }
                 // touch builder updated_at
-                if (builder) await updateBuilder(builder.id, builder.name)
+                if (builder) await updateBuilder(builder.id, builder.name || '')
               } catch (err) {
                 console.error('Failed to save board', err)
               }

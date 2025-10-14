@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useImperativeHandle } from 'react'
+import { v4 as uuidv4 } from 'uuid'
 import { getServiceHub } from '@/hooks/useServiceHub'
 import { isPlatformTauri } from '@/lib/platform'
 import { nodeRegistry as centralNodeRegistry, getNodeComponent, getNodeConfig } from '@/containers/node/nodeRegistry'
@@ -39,6 +40,8 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
 
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [runningId, setRunningId] = useState<string | null>(null)
+  // ephemeral in-memory store for last run info (not persisted)
+  const [ephemeralLastRuns, setEphemeralLastRuns] = useState<Record<string, any>>({})
 
   // active tool for the board (default: pointer)
   const [activeTool, setActiveTool] = useState<'pointer' | 'hand' | 'select' | 'text'>('pointer')
@@ -603,13 +606,14 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
               } else {
                 // Fallback: run in-browser executor and propagate
                 if (!nodeEntry.execute) continue
+                const executionIdCron = uuidv4()
                 await runAndPropagate(
                   el.id,
                   nodeEntry.id,
                   nodeEntry.execute,
                   undefined,
                   el.meta || {},
-                  {},
+                  { executionId: executionIdCron },
                   (elId: string) => connections.filter((c) => c.from.nodeId === elId).map((c) => ({ fromPortId: c.from.portId, targetElementId: c.to.nodeId, targetPortId: c.to.portId })),
                   (targetElementId: string) => {
                     const tgt = elements.find((ee) => ee.id === targetElementId)
@@ -654,17 +658,47 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
 
   // Subscribe to execution lifecycle events to update UI running state
   useEffect(() => {
-    const offStart = onExecStart(({ elementId }) => {
-      setRunningId(elementId)
-      try { updateElementMeta(elementId, { ...(elements.find(e => e.id === elementId)?.meta || {}), lastRunStatus: 'running', lastRunAt: Date.now() }) } catch {}
-    })
-    const offFinish = onExecFinish(({ elementId, result }) => {
-      setRunningId(null)
+    // track running counts per element so overlapping executions don't stomp each other's UI state
+    const runningCountsRef = { current: {} as Record<string, number> }
+
+    const incRunning = (id: string) => {
       try {
-        // persist success and also mark active port if provided by executor result
-        updateElementMeta(elementId, { ...(elements.find(e => e.id === elementId)?.meta || {}), lastRunStatus: 'success', lastRunAt: Date.now(), lastRunResult: result })
+        runningCountsRef.current[id] = (runningCountsRef.current[id] || 0) + 1
+      } catch {}
+    }
+    const decRunning = (id: string) => {
+      try {
+        runningCountsRef.current[id] = Math.max(0, (runningCountsRef.current[id] || 0) - 1)
+      } catch {}
+    }
+
+    const offStart = onExecStart(({ elementId, executionId }) => {
+      // mark the element as running (increment count)
+      incRunning(elementId)
+      setRunningId(elementId)
+      try {
+        // update ephemeral last-run info (do not persist to element meta)
+        setEphemeralLastRuns((m) => ({ ...(m || {}), [elementId]: { ...(m[elementId] || {}), lastRunStatus: 'running', lastRunAt: Date.now(), executionId } }))
+      } catch {}
+    })
+
+    const offFinish = onExecFinish(({ elementId, result, executionId }) => {
+      // decrement running count and only clear running status when count hits 0
+      decRunning(elementId)
+      try {
+        const remaining = runningCountsRef.current[elementId] || 0
+        if (remaining > 0) {
+          // still running other executions for this element; keep status running
+          setEphemeralLastRuns((m) => ({ ...(m || {}), [elementId]: { ...(m && m[elementId] || {}), lastRunStatus: 'running', lastRunAt: Date.now(), lastRunResult: result } }))
+        } else {
+          // no more running executions for this element
+          setRunningId((cur) => (cur === elementId ? null : cur))
+          setEphemeralLastRuns((m) => ({ ...(m || {}), [elementId]: { ...(m && m[elementId] || {}), lastRunStatus: 'success', lastRunAt: Date.now(), lastRunResult: result, executionId } }))
+        }
+
+        // try to mark active ports based on result (separate try to avoid blowing up UI updates)
         try {
-          const portId = (result && typeof result === 'object' && 'portId' in result) ? result.portId : undefined
+          const portId = (result && typeof result === 'object' && 'portId' in result) ? (result as any).portId : undefined
           if (portId) {
             // mark the element's output port as active
             updateElementMeta(elementId, { ...(elements.find(e => e.id === elementId)?.meta || {}), activePortId: portId, activePortKind: 'output' })
@@ -684,15 +718,32 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
             }, 1200)
           }
         } catch {}
+
       } catch {}
     })
-    const offErr = onExecError(({ elementId, error }) => {
-      setRunningId(null)
-      try { updateElementMeta(elementId, { ...(elements.find(e => e.id === elementId)?.meta || {}), lastRunStatus: 'error', lastRunAt: Date.now(), lastRunError: String(error || '') }) } catch {}
+    const offErr = onExecError(({ elementId, error, executionId }) => {
+      decRunning(elementId)
+      try {
+        const remaining = runningCountsRef.current[elementId] || 0
+        if (remaining > 0) {
+          setEphemeralLastRuns((m) => ({ ...(m || {}), [elementId]: { ...(m[elementId] || {}), lastRunStatus: 'running', lastRunAt: Date.now(), lastRunError: String(error || ''), executionId } }))
+        } else {
+          setRunningId((cur) => (cur === elementId ? null : cur))
+          setEphemeralLastRuns((m) => ({ ...(m || {}), [elementId]: { ...(m[elementId] || {}), lastRunStatus: 'error', lastRunAt: Date.now(), lastRunError: String(error || ''), executionId } }))
+        }
+      } catch {}
     })
-    const offCancel = onExecCancel(({ elementId }) => {
-      setRunningId(null)
-      try { updateElementMeta(elementId, { ...(elements.find(e => e.id === elementId)?.meta || {}), lastRunStatus: 'cancelled', lastRunAt: Date.now() }) } catch {}
+    const offCancel = onExecCancel(({ elementId, executionId }) => {
+      decRunning(elementId)
+      try {
+        const remaining = runningCountsRef.current[elementId] || 0
+        if (remaining > 0) {
+          setEphemeralLastRuns((m) => ({ ...(m || {}), [elementId]: { ...(m[elementId] || {}), lastRunStatus: 'running', lastRunAt: Date.now(), executionId } }))
+        } else {
+          setRunningId((cur) => (cur === elementId ? null : cur))
+          setEphemeralLastRuns((m) => ({ ...(m || {}), [elementId]: { ...(m[elementId] || {}), lastRunStatus: 'cancelled', lastRunAt: Date.now(), executionId } }))
+        }
+      } catch {}
     })
     return () => { offStart(); offFinish(); offErr(); offCancel() }
   }, [])
@@ -716,14 +767,15 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
           if (!nodeEntry || !nodeEntry.execute) return
           // reuse the same execution path as the publish-mode scheduler fallback
           (async () => {
-            try {
+              try {
+              const executionIdPub = uuidv4()
               await runAndPropagate(
                 el.id,
                 nodeEntry.id,
                 nodeEntry.execute as any,
                 undefined,
                 el.meta || {},
-                {},
+                { executionId: executionIdPub },
                 (elId: string) => connections.filter((c) => c.from.nodeId === elId).map((c) => ({ fromPortId: c.from.portId, targetElementId: c.to.nodeId, targetPortId: c.to.portId })),
                 (targetElementId: string) => {
                   const tgt = elements.find((ee) => ee.id === targetElementId)
@@ -917,6 +969,7 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
             connections={connections}
             runningId={runningId}
             updateElementMeta={updateElementMeta}
+            ephemeralLastRuns={ephemeralLastRuns}
             setSelectedIds={setSelectedIds}
             setConfigNodeId={setConfigNodeId}
             runAndPropagate={runAndPropagate}
@@ -928,7 +981,16 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
       </div>
 
       {/* connections SVG placed on top of everything in screen coordinates so it always covers full container */}
-      <ConnectionsSVG containerRef={containerRef} connections={connections} connectingRef={connectingRef as any} />
+      <ConnectionsSVG
+        containerRef={containerRef}
+        connections={connections}
+        connectingRef={connectingRef as any}
+        onDeleteConnection={(c) => {
+          // remove the specific connection instance
+          setConnections((arr) => arr.filter((x) => !(x.from.nodeId === c.from.nodeId && x.from.portId === c.from.portId && x.to.nodeId === c.to.nodeId && x.to.portId === c.to.portId)))
+          needsSaveRef.current = true
+        }}
+      />
       {/* Toolbar: tools with divider between each item. IconPointer selected by default */}
       <div className='fixed mx-auto left-0 right-0 bottom-2 w-max z-50 px-2 py-1 rounded-md bg-main-view-fg/6 text-main-view-fg text-sm select-none shadow-md flex items-center'>
         {(() => {
