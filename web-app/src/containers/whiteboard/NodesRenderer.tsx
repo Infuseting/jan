@@ -1,5 +1,4 @@
 import { IconPlayerPlay } from '@tabler/icons-react'
-import { v4 as uuidv4 } from 'uuid'
 import { NodeType } from '@/lib/node'
 
 type Props = {
@@ -43,8 +42,7 @@ export default function NodesRenderer({ elements, elementsAll, selectedIds, acti
             }
             setSelectedIds(newSelection)
             // set parent pointerDownRef so Whiteboard can detect start-of-drag
-                      try {
-                        const executionIdPreview = uuidv4()
+            try {
               if (pointerDownRef) {
                 pointerDownRef.current = { id: el.id, time: Date.now(), startX: ev.clientX, startY: ev.clientY, selectionAtDown: newSelection, modifier }
               }
@@ -82,7 +80,7 @@ export default function NodesRenderer({ elements, elementsAll, selectedIds, acti
                         nodeEntry.execute,
                         undefined,
                         el.meta || {},
-                        { executionId: executionIdPreview },
+                        {},
                         (elId: string) => connections.filter((c) => c.from.nodeId === elId).map((c) => ({ fromPortId: c.from.portId, targetElementId: c.to.nodeId, targetPortId: c.to.portId })),
                         (targetElementId: string) => {
                           const tgt = elementsAll.find((ee) => ee.id === targetElementId)

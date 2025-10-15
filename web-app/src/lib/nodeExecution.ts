@@ -22,7 +22,6 @@ export type RunEventPayload = {
   nodeId?: string
   result?: any
   error?: any
-  executionId?: string
 }
 
 // standard executor return shape suggestion
@@ -58,51 +57,51 @@ class Emitter {
 
 const emitter = new Emitter()
 
-// currently running elementIds -> (executionId -> AbortController)
-// This allows multiple concurrent executions for the same element as long as
-// each execution has a distinct executionId set in the ctx passed to
-// runExecutorForElement. If no executionId is provided, a default id is used
-// to preserve previous single-run semantics.
-const runningControllers = new Map<string, Map<string, AbortController>>()
+// currently running elementId (or compositeKey) -> AbortController
+// compositeKey format: `${elementId}::${runKey}` when runKey provided in ctx
+const runningControllers = new Map<string, AbortController>()
 
 /**
  * Return true if the element is currently executing.
  */
-export function isRunning(elementId: string) {
-  const map = runningControllers.get(elementId)
-  return !!(map && map.size > 0)
+export function isRunning(elementId: string, runKey?: string) {
+  if (runKey) return runningControllers.has(`${elementId}::${runKey}`)
+  // if no runKey provided, return true if any controller exists for elementId
+  for (const k of runningControllers.keys()) {
+    if (k === elementId || k.startsWith(elementId + '::')) return true
+  }
+  return false
 }
 
 /**
  * Stop/cancel execution for an element (if running). This triggers an abort
  * on the signal that will be passed to the executor (if it uses it).
  */
-export function stop(elementId: string, executionId?: string) {
-  const map = runningControllers.get(elementId)
-  if (!map) return false
-
-  try {
-    if (executionId) {
-      const ctrl = map.get(executionId)
-      if (!ctrl) return false
-      console.debug('[nodeExecution] stop: aborting element', elementId, executionId)
-      ctrl.abort()
-      map.delete(executionId)
-    } else {
-      // abort all executions for this element
-      console.debug('[nodeExecution] stop: aborting all executions for element', elementId)
-      for (const ctrl of Array.from(map.values())) {
-        try { ctrl.abort() } catch (e) { /* swallow per-controller errors */ }
-      }
-      runningControllers.delete(elementId)
-    }
-  } catch (e) {
-    console.error('[nodeExecution] stop: abort error for', elementId, e)
+// stop by elementId and optional runKey. If runKey omitted, stop all runs for elementId.
+export function stop(elementId: string, runKey?: string) {
+  if (runKey) {
+    const key = `${elementId}::${runKey}`
+    const ctrl = runningControllers.get(key)
+    if (!ctrl) return false
+    try { ctrl.abort() } catch (e) { console.error('[nodeExecution] stop: abort error for', key, e) }
+    runningControllers.delete(key)
+    emitter.emit('cancel', { elementId })
+    console.info('[nodeExecution] stop: emitted cancel for', key)
+    return true
   }
-
-  emitter.emit('cancel', { elementId })
-  console.info('[nodeExecution] stop: emitted cancel for', elementId)
-  return true
+  // stop all matching controllers for elementId
+  let stopped = false
+  for (const k of Array.from(runningControllers.keys())) {
+    if (k === elementId || k.startsWith(elementId + '::')) {
+      const ctrl = runningControllers.get(k)!
+      try { ctrl.abort() } catch (e) { console.error('[nodeExecution] stop: abort error for', k, e) }
+      runningControllers.delete(k)
+      emitter.emit('cancel', { elementId })
+      console.info('[nodeExecution] stop: emitted cancel for', k)
+      stopped = true
+    }
+  }
+  return stopped
 }
 
 /**
@@ -123,28 +122,21 @@ export async function runExecutorForElement(
   ctx?: Record<string, any>
 ) {
   if (!elementId) throw new Error('elementId required')
-
-  // allow callers to scope executions via an executionId in ctx so multiple
-  // triggers can execute the same element concurrently. If absent, fall back
-  // to a default id to preserve old single-run behavior per element.
-  const executionId = (ctx && typeof ctx.executionId === 'string') ? ctx.executionId : '__default__'
-
-  const existingMap = runningControllers.get(elementId)
-  if (existingMap && existingMap.has(executionId)) {
-    throw new Error(`element ${elementId} is already running for executionId ${executionId}`)
+  // allow multiple concurrent runs for same element if caller provides a runKey/runPath
+  const runKey = ctx && (ctx.runPath || ctx.runKey || ctx.executionId || ctx.runId)
+  const compositeKey = runKey ? `${elementId}::${runKey}` : elementId
+  if (runningControllers.has(compositeKey)) {
+    throw new Error(`element ${elementId} (run ${String(runKey)}) is already running`)
   }
 
   const controller = new AbortController()
-  if (existingMap) {
-    existingMap.set(executionId, controller)
-  } else {
-    runningControllers.set(elementId, new Map([[executionId, controller]]))
-  }
+  runningControllers.set(compositeKey, controller)
 
+  // pass the controller signal and preserve any runKey/runPath in context
   const context = Object.assign({}, ctx || {}, { signal: controller.signal })
 
-  console.debug('[nodeExecution] runExecutorForElement: start', { elementId, nodeId, executionId })
-  emitter.emit('start', { elementId, nodeId, executionId })
+  console.debug('[nodeExecution] runExecutorForElement: start', { elementId, nodeId })
+  emitter.emit('start', { elementId, nodeId })
 
   try {
     const maybe = executor(input, meta, context)
@@ -152,30 +144,21 @@ export async function runExecutorForElement(
     const result = await Promise.resolve(maybe)
     // if execution wasn't aborted during await
     if (!controller.signal.aborted) {
-      // remove this executionId controller
-      const map = runningControllers.get(elementId)
-      if (map) {
-        map.delete(executionId)
-        if (map.size === 0) runningControllers.delete(elementId)
-      }
-  emitter.emit('finish', { elementId, nodeId, result, executionId })
-  console.debug('[nodeExecution] runExecutorForElement: finish', { elementId, nodeId, executionId, result })
+      runningControllers.delete(compositeKey)
+      emitter.emit('finish', { elementId, nodeId, result })
+      console.debug('[nodeExecution] runExecutorForElement: finish', { elementId, nodeId, result })
     } else {
       // aborted
-  emitter.emit('cancel', { elementId, nodeId, executionId })
-  console.info('[nodeExecution] runExecutorForElement: canceled during await', { elementId, nodeId, executionId })
+      runningControllers.delete(compositeKey)
+      emitter.emit('cancel', { elementId, nodeId })
+      console.info('[nodeExecution] runExecutorForElement: canceled during await', { elementId, nodeId })
     }
     return result
   } catch (err) {
-    // remove controller for this execution
-    const map = runningControllers.get(elementId)
-    if (map) {
-      map.delete(executionId)
-      if (map.size === 0) runningControllers.delete(elementId)
-    }
-  // emit error event
-  emitter.emit('error', { elementId, nodeId, error: err, executionId })
-  console.error('[nodeExecution] runExecutorForElement: error', { elementId, nodeId, executionId, error: err })
+    runningControllers.delete(compositeKey)
+    // emit error event
+    emitter.emit('error', { elementId, nodeId, error: err })
+    console.error('[nodeExecution] runExecutorForElement: error', { elementId, nodeId, error: err })
     throw err
   }
 }
@@ -200,17 +183,27 @@ export async function runAndPropagate(
   getOutgoing?: (elId: string) => Array<{ fromPortId?: string; targetElementId: string; targetPortId?: string }> ,
   resolveTarget?: (targetElementId: string) => { executor?: NodeExecutor; nodeId?: string; meta?: Record<string, any>; input?: any } | null,
   mapResultToInput?: (resultOutput: any, resultPortId: string | undefined, fromElementId: string, toElementId: string, toPort?: string) => any,
-  visited?: Set<string>
+  visited?: Set<string>,
+  path?: string[]
 ) {
   if (!visited) visited = new Set()
   if (visited.has(elementId)) return
   visited.add(elementId)
 
-  console.debug('[nodeExecution] runAndPropagate: executing element', elementId, { nodeId })
+  // maintain a path of element ids leading to this execution. This is used to
+  // differentiate concurrent runs arriving at the same element from different
+  // pre-paths. The path is added to ctx as `runPath` so downstream executors
+  // and nodeExecution can use it to allow concurrent executions.
+  if (!path) path = []
+  const myPath = [...path, elementId]
+  const runPathKey = myPath.join('>')
+  const ctxWithPath = Object.assign({}, ctx || {}, { runPath: runPathKey })
+
+  console.debug('[nodeExecution] runAndPropagate: executing element', elementId, { nodeId, runPathKey })
 
   let resultRaw: any
   try {
-    resultRaw = await runExecutorForElement(elementId, nodeId, executor, input, meta, ctx)
+    resultRaw = await runExecutorForElement(elementId, nodeId, executor, input, meta, ctxWithPath)
   } catch (err) {
     // executor error already emitted by runExecutorForElement; stop propagation on this branch
     return
@@ -236,7 +229,7 @@ export async function runAndPropagate(
     const nextInput = mapResultToInput ? mapResultToInput(resultOutput, resultPortId, elementId, out.targetElementId, out.targetPortId) : resultOutput
     try {
       console.debug('[nodeExecution] runAndPropagate: propagating from', elementId, 'to', out.targetElementId, { fromPortId: out.fromPortId, toPortId: out.targetPortId })
-      await runAndPropagate(out.targetElementId, target.nodeId, target.executor, nextInput, target.meta, ctx, getOutgoing, resolveTarget, mapResultToInput, visited)
+      await runAndPropagate(out.targetElementId, target.nodeId, target.executor, nextInput, target.meta, ctxWithPath, getOutgoing, resolveTarget, mapResultToInput, visited, myPath)
     } catch (e) {
       // errors are already emitted by runExecutorForElement
       console.error('[nodeExecution] runAndPropagate: error propagating to', out.targetElementId, e)

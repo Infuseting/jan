@@ -1,5 +1,4 @@
 import React, { useEffect, useRef, useState, useImperativeHandle } from 'react'
-import { v4 as uuidv4 } from 'uuid'
 import { getServiceHub } from '@/hooks/useServiceHub'
 import { isPlatformTauri } from '@/lib/platform'
 import { nodeRegistry as centralNodeRegistry, getNodeComponent, getNodeConfig } from '@/containers/node/nodeRegistry'
@@ -606,14 +605,13 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
               } else {
                 // Fallback: run in-browser executor and propagate
                 if (!nodeEntry.execute) continue
-                const executionIdCron = uuidv4()
                 await runAndPropagate(
                   el.id,
                   nodeEntry.id,
                   nodeEntry.execute,
                   undefined,
                   el.meta || {},
-                  { executionId: executionIdCron },
+                  {},
                   (elId: string) => connections.filter((c) => c.from.nodeId === elId).map((c) => ({ fromPortId: c.from.portId, targetElementId: c.to.nodeId, targetPortId: c.to.portId })),
                   (targetElementId: string) => {
                     const tgt = elements.find((ee) => ee.id === targetElementId)
@@ -658,47 +656,20 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
 
   // Subscribe to execution lifecycle events to update UI running state
   useEffect(() => {
-    // track running counts per element so overlapping executions don't stomp each other's UI state
-    const runningCountsRef = { current: {} as Record<string, number> }
-
-    const incRunning = (id: string) => {
-      try {
-        runningCountsRef.current[id] = (runningCountsRef.current[id] || 0) + 1
-      } catch {}
-    }
-    const decRunning = (id: string) => {
-      try {
-        runningCountsRef.current[id] = Math.max(0, (runningCountsRef.current[id] || 0) - 1)
-      } catch {}
-    }
-
-    const offStart = onExecStart(({ elementId, executionId }) => {
-      // mark the element as running (increment count)
-      incRunning(elementId)
+    const offStart = onExecStart(({ elementId }) => {
       setRunningId(elementId)
       try {
         // update ephemeral last-run info (do not persist to element meta)
-        setEphemeralLastRuns((m) => ({ ...(m || {}), [elementId]: { ...(m[elementId] || {}), lastRunStatus: 'running', lastRunAt: Date.now(), executionId } }))
+        setEphemeralLastRuns((m) => ({ ...(m || {}), [elementId]: { ...(m[elementId] || {}), lastRunStatus: 'running', lastRunAt: Date.now() } }))
       } catch {}
     })
-
-    const offFinish = onExecFinish(({ elementId, result, executionId }) => {
-      // decrement running count and only clear running status when count hits 0
-      decRunning(elementId)
+    const offFinish = onExecFinish(({ elementId, result }) => {
+      setRunningId(null)
       try {
-        const remaining = runningCountsRef.current[elementId] || 0
-        if (remaining > 0) {
-          // still running other executions for this element; keep status running
-          setEphemeralLastRuns((m) => ({ ...(m || {}), [elementId]: { ...(m && m[elementId] || {}), lastRunStatus: 'running', lastRunAt: Date.now(), lastRunResult: result } }))
-        } else {
-          // no more running executions for this element
-          setRunningId((cur) => (cur === elementId ? null : cur))
-          setEphemeralLastRuns((m) => ({ ...(m || {}), [elementId]: { ...(m && m[elementId] || {}), lastRunStatus: 'success', lastRunAt: Date.now(), lastRunResult: result, executionId } }))
-        }
-
-        // try to mark active ports based on result (separate try to avoid blowing up UI updates)
+        // update ephemeral success and also mark active port if provided by executor result
+        setEphemeralLastRuns((m) => ({ ...(m || {}), [elementId]: { ...(m[elementId] || {}), lastRunStatus: 'success', lastRunAt: Date.now(), lastRunResult: result } }))
         try {
-          const portId = (result && typeof result === 'object' && 'portId' in result) ? (result as any).portId : undefined
+          const portId = (result && typeof result === 'object' && 'portId' in result) ? result.portId : undefined
           if (portId) {
             // mark the element's output port as active
             updateElementMeta(elementId, { ...(elements.find(e => e.id === elementId)?.meta || {}), activePortId: portId, activePortKind: 'output' })
@@ -718,32 +689,15 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
             }, 1200)
           }
         } catch {}
-
       } catch {}
     })
-    const offErr = onExecError(({ elementId, error, executionId }) => {
-      decRunning(elementId)
-      try {
-        const remaining = runningCountsRef.current[elementId] || 0
-        if (remaining > 0) {
-          setEphemeralLastRuns((m) => ({ ...(m || {}), [elementId]: { ...(m[elementId] || {}), lastRunStatus: 'running', lastRunAt: Date.now(), lastRunError: String(error || ''), executionId } }))
-        } else {
-          setRunningId((cur) => (cur === elementId ? null : cur))
-          setEphemeralLastRuns((m) => ({ ...(m || {}), [elementId]: { ...(m[elementId] || {}), lastRunStatus: 'error', lastRunAt: Date.now(), lastRunError: String(error || ''), executionId } }))
-        }
-      } catch {}
+    const offErr = onExecError(({ elementId, error }) => {
+      setRunningId(null)
+      try { setEphemeralLastRuns((m) => ({ ...(m || {}), [elementId]: { ...(m[elementId] || {}), lastRunStatus: 'error', lastRunAt: Date.now(), lastRunError: String(error || '') } })) } catch {}
     })
-    const offCancel = onExecCancel(({ elementId, executionId }) => {
-      decRunning(elementId)
-      try {
-        const remaining = runningCountsRef.current[elementId] || 0
-        if (remaining > 0) {
-          setEphemeralLastRuns((m) => ({ ...(m || {}), [elementId]: { ...(m[elementId] || {}), lastRunStatus: 'running', lastRunAt: Date.now(), executionId } }))
-        } else {
-          setRunningId((cur) => (cur === elementId ? null : cur))
-          setEphemeralLastRuns((m) => ({ ...(m || {}), [elementId]: { ...(m[elementId] || {}), lastRunStatus: 'cancelled', lastRunAt: Date.now(), executionId } }))
-        }
-      } catch {}
+    const offCancel = onExecCancel(({ elementId }) => {
+      setRunningId(null)
+      try { setEphemeralLastRuns((m) => ({ ...(m || {}), [elementId]: { ...(m[elementId] || {}), lastRunStatus: 'cancelled', lastRunAt: Date.now() } })) } catch {}
     })
     return () => { offStart(); offFinish(); offErr(); offCancel() }
   }, [])
@@ -767,15 +721,14 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
           if (!nodeEntry || !nodeEntry.execute) return
           // reuse the same execution path as the publish-mode scheduler fallback
           (async () => {
-              try {
-              const executionIdPub = uuidv4()
+            try {
               await runAndPropagate(
                 el.id,
                 nodeEntry.id,
                 nodeEntry.execute as any,
                 undefined,
                 el.meta || {},
-                { executionId: executionIdPub },
+                {},
                 (elId: string) => connections.filter((c) => c.from.nodeId === elId).map((c) => ({ fromPortId: c.from.portId, targetElementId: c.to.nodeId, targetPortId: c.to.portId })),
                 (targetElementId: string) => {
                   const tgt = elements.find((ee) => ee.id === targetElementId)
