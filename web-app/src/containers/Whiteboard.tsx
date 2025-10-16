@@ -253,6 +253,8 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
         const nodeId = portEl.getAttribute('data-node-id')
         if (portKind === 'output' && nodeId && portId) {
           connectingRef.current = { fromNode: nodeId, fromPort: portId, toScreen: { x: sx, y: sy } }
+          // debug starting connection
+          console.debug('[Whiteboard] start connecting', { fromNode: nodeId, fromPort: portId, screen: { x: sx, y: sy } })
           ;(e.target as Element).setPointerCapture?.(e.pointerId)
           return
         }
@@ -386,10 +388,24 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
       // if we were connecting and released over an input port, create connection
       if (connectingRef.current && ev) {
         try {
-          const targ = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
-          const nodeId = targ?.getAttribute?.('data-node-id')
-          const portId = targ?.getAttribute?.('data-port-id')
-          const portKind = targ?.getAttribute?.('data-port-kind')
+          const raw = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
+          let portEl = raw ? (raw.closest('[data-port-kind]') as HTMLElement | null) : null
+          console.debug('[Whiteboard] connection drop raw element', { tag: raw?.tagName, id: raw?.id, class: raw?.className, portEl: portEl && { tag: portEl.tagName, id: portEl.id } })
+          // fallback: if the drop landed on a node body (has data-node-id) but not on a port element,
+          // try to find the first input port inside that node so users can drop on the node body.
+          if (!portEl && raw) {
+            const nodeParent = raw.closest('[data-node-id]') as HTMLElement | null
+            if (nodeParent) {
+              const firstInput = nodeParent.querySelector('[data-port-kind="input"]') as HTMLElement | null
+              if (firstInput) {
+                portEl = firstInput
+                console.debug('[Whiteboard] connection drop fallback to first input', { nodeId: nodeParent.getAttribute('data-node-id'), portId: firstInput.getAttribute('data-port-id') })
+              }
+            }
+          }
+          const nodeId = portEl?.getAttribute?.('data-node-id')
+          const portId = portEl?.getAttribute?.('data-port-id')
+          const portKind = portEl?.getAttribute?.('data-port-kind')
           if (nodeId && portId && portKind === 'input') {
             const cur = connectingRef.current
             if (cur) {
@@ -404,7 +420,7 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
               })
             }
           }
-        } catch {}
+        } catch (err) { console.debug('[Whiteboard] connection drop error', err) }
         connectingRef.current = null
       }
       // If there was a pending pointerDown on an element and no drag started, treat as click
@@ -921,6 +937,7 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
             nodeRegistry={nodeRegistry as any}
             connections={connections}
             runningId={runningId}
+            setRunningId={setRunningId}
             updateElementMeta={updateElementMeta}
             ephemeralLastRuns={ephemeralLastRuns}
             setSelectedIds={setSelectedIds}

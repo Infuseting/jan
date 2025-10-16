@@ -61,6 +61,58 @@ export function replaceTokensForEval(expr: string, sample: any = {}, meta: any =
   })
 }
 
+// Basic sanitization for replaced expressions before eval.
+// This is defensive — it rejects expressions that contain disallowed
+// tokens or obvious code-execution patterns. It aims to allow property
+// access, literals, operators and `new Date(...)` while blocking
+// function definitions, calls (except Date constructor), imports,
+// and access to dangerous globals.
+function isExpressionSafe(replaced: string): boolean {
+  if (!replaced || typeof replaced !== 'string') return false
+
+  // Disallow backticks and template literal usage
+  if (replaced.includes('`')) return false
+
+  // Disallow block characters and array/object literals which could
+  // be used to smuggle code: { } [ ]
+  if (/[\{\}\[\]]/.test(replaced)) return false
+
+  // Disallow semicolons and backslash which are often used to chain
+  // or escape into other statements
+  if (replaced.includes(';') || replaced.includes('\\')) return false
+
+  // Disallow keywords that can access runtime or define functions
+  const bannedKeywords = [
+    'function', '=>', 'constructor', 'prototype', '__proto__', 'require', 'process', 'global', 'window', 'document', 'import', 'export', 'eval'
+  ]
+  for (const k of bannedKeywords) if (replaced.includes(k)) return false
+
+  // Disallow suspicious use of `new` except for `new Date(...)`.
+  if (/\bnew\b/.test(replaced) && !/\bnew\s+Date\s*\(/.test(replaced)) return false
+
+  // Disallow function calls on identifiers/properties. Allow numeric and
+  // boolean literals, string literals, operators and simple property access
+  // like a.b.c or globalVar.prop
+  // This is conservative: any parentheses that look like a call are rejected
+  // unless they're the Date(...) after new which was handled above.
+  if (/([a-zA-Z0-9_$\.])+\s*\(/.test(replaced)) return false
+
+  // Allow only a restricted set of characters: alphanum, whitespace, quotes,
+  // dots, parentheses (only for new Date which is checked), commas, math and
+  // comparison operators, boolean operators and colon/question for ternary
+  // Note: strings and numbers are already produced by literalFor.
+  const allowedPattern = /^[0-9a-zA-Z_\s\.'"\$\.\(\)\+\-\*\/\%\!\=\<\>\&\|\?:,]*$/
+  if (!allowedPattern.test(replaced)) return false
+
+  return true
+}
+
+function safeEval(replaced: string) {
+  if (!isExpressionSafe(replaced)) throw new Error('Unsafe expression')
+  // eslint-disable-next-line no-eval
+  return eval(replaced)
+}
+
 export function evaluateExpressionToBoolean(expr: string, sample: any = {}, meta: any = {}) {
   try {
     const replaced = replaceTokensForEval(expr, sample, meta)
@@ -68,8 +120,7 @@ export function evaluateExpressionToBoolean(expr: string, sample: any = {}, meta
     // quick checks for trivial keywords
     if (replaced.includes('isTrue')) return true
     if (replaced.includes('isFalse')) return false
-    // eslint-disable-next-line no-eval
-    const res = eval(replaced)
+    const res = safeEval(replaced)
     return Boolean(res)
   } catch (e) {
     return false
@@ -81,8 +132,7 @@ export function evaluateExpression(expr: string, sample: any = {}, meta: any = {
   try {
     const replaced = replaceTokensForEval(expr, sample, meta)
     if (!replaced) return undefined
-    // eslint-disable-next-line no-eval
-    return eval(replaced)
+    return safeEval(replaced)
   } catch (e) {
     return undefined
   }

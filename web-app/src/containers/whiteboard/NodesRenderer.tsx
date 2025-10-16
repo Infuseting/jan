@@ -1,5 +1,7 @@
 import { IconPlayerPlay } from '@tabler/icons-react'
+import { stop as stopExecution } from '@/lib/nodeExecution'
 import { NodeType } from '@/lib/node'
+import { portEnum, port } from './portTypes'
 
 type Props = {
   elements: any[]
@@ -14,11 +16,12 @@ type Props = {
   runAndPropagate: any
   getNodeComponent: (nodeId: string) => any
   elementsAll: any[]
+  setRunningId?: (id: string | null) => void
   pointerDownRef?: { current: null | { id: string; time: number; startX: number; startY: number; selectionAtDown: string[]; modifier: boolean } }
   ephemeralLastRuns?: Record<string, any>
 }
 
-export default function NodesRenderer({ elements, elementsAll, selectedIds, activeTool, nodeRegistry, connections, runningId, updateElementMeta, setSelectedIds, setConfigNodeId, runAndPropagate, getNodeComponent, pointerDownRef, ephemeralLastRuns }: Props) {
+export default function NodesRenderer({ elements, elementsAll, selectedIds, activeTool, nodeRegistry, connections, runningId, updateElementMeta, setSelectedIds, setConfigNodeId, runAndPropagate, getNodeComponent, pointerDownRef, ephemeralLastRuns, setRunningId }: Props) {
   return (
     <>
       {elements.map((el) => {
@@ -66,40 +69,55 @@ export default function NodesRenderer({ elements, elementsAll, selectedIds, acti
           return (
             <div key={el.id} className={wrapperClass} {...commonProps as any}>
               {nodeEntry && nodeEntry.nodeType === NodeType.Trigger && (
-                <button
-                  title="Run preview"
-                  onPointerDown={(ev) => { ev.stopPropagation(); ev.preventDefault(); }}
-                  onClick={async (ev) => {
-                    ev.stopPropagation()
-                    try {
-                      if (!nodeEntry || !nodeEntry.execute) return
-                      // reuse runAndPropagate signature from parent to run and propagate
-                      const res = await runAndPropagate(
-                        el.id,
-                        nodeEntry.id,
-                        nodeEntry.execute,
-                        undefined,
-                        el.meta || {},
-                        {},
-                        (elId: string) => connections.filter((c) => c.from.nodeId === elId).map((c) => ({ fromPortId: c.from.portId, targetElementId: c.to.nodeId, targetPortId: c.to.portId })),
-                        (targetElementId: string) => {
-                          const tgt = elementsAll.find((ee) => ee.id === targetElementId)
-                          if (!tgt) return null
-                          const nid = (tgt.meta as any)?._nodeId
-                          if (!nid) return null
-                          const entry = nodeRegistry.find((n) => n.id === nid)
-                          if (!entry || !entry.execute) return null
-                          return { executor: entry.execute as any, nodeId: entry.id, meta: tgt.meta }
-                        },
-                        (resultOutput: any) => resultOutput
-                      )
-                      console.debug('[Whiteboard] run preview finished for', el.id, 'result', res)
-                    } catch (err) { console.error('Error running node preview', err) }
-                  }}
-                  style={{ position: 'absolute', left: '50%', bottom: '100%', transform: 'translateX(-50%)', marginBottom: 4, zIndex: 80, padding: '4px 8px', fontSize: 12, borderRadius: 6, border: '1px solid rgba(0,0,0,0.1)', background: runningId === el.id ? 'rgba(14,165,233,0.12)' : 'rgba(255,255,255,0.04)', color: 'inherit', cursor: runningId === el.id ? 'wait' : 'pointer' }}
-                >
-                  {runningId === el.id ? 'Running...' : <IconPlayerPlay />}
-                </button>
+                <>
+                  {runningId === el.id ? (
+                    <button
+                      title="Force stop"
+                      onPointerDown={(ev) => { ev.stopPropagation(); ev.preventDefault(); }}
+                      onClick={(ev) => { ev.stopPropagation(); try { stopExecution(el.id); } catch (e) { console.error('stop error', e) } }}
+                      style={{ position: 'absolute', left: '50%', bottom: '100%', transform: 'translateX(-50%)', marginBottom: 4, zIndex: 80, padding: '4px 8px', fontSize: 12, borderRadius: 6, border: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,120,120,0.12)', color: 'inherit', cursor: 'pointer' }}
+                    >
+                      Stop
+                    </button>
+                  ) : (
+                    <button
+                      title="Run preview"
+                      onPointerDown={(ev) => { ev.stopPropagation(); ev.preventDefault(); }}
+                      onClick={async (ev) => {
+                        ev.stopPropagation()
+                        try {
+                          // set running state immediately so the Stop button appears even for fast runs
+                          try { setRunningId?.(el.id) } catch {}
+                          if (!nodeEntry || !nodeEntry.execute) return
+                          // reuse runAndPropagate signature from parent to run and propagate
+                          const res = await runAndPropagate(
+                            el.id,
+                            nodeEntry.id,
+                            nodeEntry.execute,
+                            undefined,
+                            el.meta || {},
+                            {},
+                            (elId: string) => connections.filter((c) => c.from.nodeId === elId).map((c) => ({ fromPortId: c.from.portId, targetElementId: c.to.nodeId, targetPortId: c.to.portId })),
+                            (targetElementId: string) => {
+                              const tgt = elementsAll.find((ee) => ee.id === targetElementId)
+                              if (!tgt) return null
+                              const nid = (tgt.meta as any)?._nodeId
+                              if (!nid) return null
+                              const entry = nodeRegistry.find((n) => n.id === nid)
+                              if (!entry || !entry.execute) return null
+                              return { executor: entry.execute as any, nodeId: entry.id, meta: tgt.meta }
+                            },
+                            (resultOutput: any) => resultOutput
+                          )
+                          console.debug('[Whiteboard] run preview finished for', el.id, 'result', res)
+                        } catch (err) { console.error('Error running node preview', err) }
+                      }}
+                      style={{ position: 'absolute', left: '50%', bottom: '100%', transform: 'translateX(-50%)', marginBottom: 4, zIndex: 80, padding: '4px 8px', fontSize: 12, borderRadius: 6, border: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,255,255,0.04)', color: 'inherit', cursor: 'pointer' }}
+                    >
+                      <IconPlayerPlay />
+                    </button>
+                  )}
+                </>
               )}
 
               <Comp id={el.id} meta={el.meta} selected={isSelected} onMetaChange={(m: any) => updateElementMeta(el.id, m)} activePortId={(el.meta && (el.meta as any).activePortId) || null} activePortKind={(el.meta && (el.meta as any).activePortKind) || null} />

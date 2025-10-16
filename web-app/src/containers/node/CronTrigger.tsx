@@ -2,6 +2,7 @@ import NodeBase from '@/containers/NodeBase'
 import { useState, useEffect } from 'react'
 import { IconClock } from '@tabler/icons-react'
 import { NodeType } from '@/lib/node'
+import { portEnum } from '@/containers/whiteboard/portTypes'
 
 function encodeCronForUrl(cron: string) {
   // crontab.guru expects spaces replaced by underscores in the fragment, but
@@ -9,7 +10,7 @@ function encodeCronForUrl(cron: string) {
   return encodeURIComponent(cron.replace(/\s+/g, '_'))
 }
 
-export default function Node({ id, meta, selected, activePortId, activePortKind }: { id: string; meta?: Record<string, any>; onMetaChange?: (m: Record<string, any>) => void; selected?: boolean; activePortId?: string | null; activePortKind?: 'input' | 'output' | null }) {
+export default function Node({ id, meta, selected, activePortId, activePortKind }: { id: string; meta?: Record<string, any>; onMetaChange?: (m: Record<string, any>) => void; selected?: boolean; activePortId?: string | null; activePortKind?: import('@/containers/whiteboard/portTypes').portEnum | null }) {
   const initial = (meta && meta.cron) || '0 * * * *'
   const [cron, setCron] = useState<string>(initial)
 
@@ -20,7 +21,7 @@ export default function Node({ id, meta, selected, activePortId, activePortKind 
   }, [meta?.cron])
 
   return (
-    <NodeBase id={id} selected={selected} title="Cron Trigger" inputs={[]} outputs={[{ id: 'out', label: 'Trigger' }]} activePortId={activePortId} activePortKind={activePortKind} />
+    <NodeBase id={id} selected={selected} title="Cron Trigger" inputs={[]} outputs={[{ id: 'out', label: 'Trigger', kind: portEnum.Output, showLabel: true }]} activePortId={activePortId} activePortKind={activePortKind} />
   )
 }
 export function NodeConfig({ meta, setMeta }: { meta?: Record<string, any>; setMeta: (m: Record<string, any>) => void }) {

@@ -1,4 +1,5 @@
 import NodeBase from '@/containers/NodeBase'
+import { portEnum } from '@/containers/whiteboard/portTypes'
 import { useState, useEffect } from 'react'
 import SmartInput from '@/containers/SmartInput'
 import { IconPlayerPlay } from '@tabler/icons-react'
@@ -6,14 +7,14 @@ import { NodeType } from '@/lib/node'
 import { GLOBAL_SUGGESTIONS, resolveGlobal } from '@/lib/globals'
 import { evaluateExpression, replaceTokensForEval } from '@/lib/expression'
 
-export default function Node({ id, selected, activePortId, activePortKind }: { id: string; selected?: boolean; activePortId?: string | null; activePortKind?: 'input' | 'output' | null }) {
+export default function Node({ id, selected, activePortId, activePortKind }: { id: string; selected?: boolean; activePortId?: string | null; activePortKind?: import('@/containers/whiteboard/portTypes').portEnum | null }) {
   return (
     <NodeBase
       id={id}
       selected={selected}
       title="If"
-      inputs={[{ id: 'cond', label: 'Condition' }]}
-      outputs={[{ id: 'true', label: 'True' }, { id: 'false', label: 'False' }]}
+  inputs={[{ id: 'cond', label: 'Condition', kind: portEnum.Input, showLabel: true }]}
+  outputs={[{ id: 'true', label: 'True', kind: portEnum.Output, showLabel: true }, { id: 'false', label: 'False', kind: portEnum.Output, showLabel: true }]}
       activePortId={activePortId}
       activePortKind={activePortKind}
     />

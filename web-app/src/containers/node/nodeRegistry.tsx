@@ -1,11 +1,13 @@
 import { getNodeEntry as getIfNodeEntry } from './IfNode'
 import { getNodeEntry as getWhileNodeEntry } from './WhileNode'
 import { getNodeEntry as getForNodeEntry } from './ForNode'
+import { getNodeEntry as getDoWhileNodeEntry } from './DoWhileNode'
 import { getNodeEntry as getCronNodeEntry } from './CronTrigger'
 import { getNodeEntry as getThreadMessageNodeEntry } from './ThreadMessageTrigger'
 import { getNodeEntry as getThreadCreatedNodeEntry } from './ThreadCreatedTrigger'
 import { getNodeEntry as getManualNodeEntry } from './ManualTrigger'
 import { getNodeEntry as getHttpRequestNodeEntry } from './HttpRequestNode'
+import { getNodeEntry as getPrintNodeEntry } from './PrintNode'
 import React from 'react'
 import { NodeType } from '@/lib/node'
 
@@ -56,11 +58,13 @@ const registry: NodeEntry[] = [
   getIfNodeEntry(),
   getWhileNodeEntry(),
   getForNodeEntry(),
+  getDoWhileNodeEntry(),
   getCronNodeEntry(),
   getThreadMessageNodeEntry(),
   getThreadCreatedNodeEntry(),
   getManualNodeEntry(),
   getHttpRequestNodeEntry(),
+  getPrintNodeEntry(),
 ]
 
 export const nodeRegistry = registry

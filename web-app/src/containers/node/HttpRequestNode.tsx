@@ -1,18 +1,19 @@
 import NodeBase from '@/containers/NodeBase'
 import { useState, useEffect } from 'react'
 import { NodeType } from '@/lib/node'
+import { portEnum } from '@/containers/whiteboard/portTypes'
 import SmartInput from '@/containers/SmartInput'
 import { GLOBAL_SUGGESTIONS, resolveGlobal } from '@/lib/globals'
 import { evaluateExpression } from '@/lib/expression'
 
-export default function Node({ id, selected, activePortId, activePortKind }: { id: string; selected?: boolean; activePortId?: string | null; activePortKind?: 'input' | 'output' | null }) {
+export default function Node({ id, selected, activePortId, activePortKind }: { id: string; selected?: boolean; activePortId?: string | null; activePortKind?: import('@/containers/whiteboard/portTypes').portEnum | null }) {
   return (
     <NodeBase
       id={id}
       selected={selected}
       title="HTTP Request"
-      inputs={[{ id: 'in', label: 'Trigger' }]}
-      outputs={[{ id: 'out', label: 'Response' }]}
+  inputs={[{ id: 'in', label: 'Trigger', kind: portEnum.Input, showLabel: true }]}
+  outputs={[{ id: 'out', label: 'Response', kind: portEnum.Output, showLabel: true }]}
       activePortId={activePortId}
       activePortKind={activePortKind}
     />

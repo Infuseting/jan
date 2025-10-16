@@ -1,4 +1,5 @@
 import NodeBase from '@/containers/NodeBase'
+import { portEnum } from '@/containers/whiteboard/portTypes'
 import { useState } from 'react'
 import { IconPlus, IconCheck } from '@tabler/icons-react'
 import { NodeType } from '@/lib/node'
@@ -11,61 +12,15 @@ import {
 import { useThreadManagement } from '@/hooks/useThreadManagement'
 import { useThreads } from '@/hooks/useThreads'
 
-export default function Node({ id, meta, onMetaChange, selected, activePortId, activePortKind }: { id: string; meta?: Record<string, any>; onMetaChange?: (m: Record<string, any>) => void; selected?: boolean; activePortId?: string | null; activePortKind?: 'input' | 'output' | null }) {
+export default function Node({ id, meta, onMetaChange, selected, activePortId, activePortKind }: { id: string; meta?: Record<string, any>; onMetaChange?: (m: Record<string, any>) => void; selected?: boolean; activePortId?: string | null; activePortKind?: import('@/containers/whiteboard/portTypes').portEnum | null }) {
   const [selectedFolders, setSelectedFolders] = useState<string[]>((meta && meta.folders) || [])
 
   const { folders } = useThreadManagement()
   useThreads((s) => s.threads) // ensure hook subscription, value not needed here
 
   return (
-    <NodeBase id={id} selected={selected} title="Thread Created Trigger" inputs={[]} outputs={[{ id: 'out', label: 'Trigger' }]} activePortId={activePortId} activePortKind={activePortKind}>
-      <div style={{ marginTop: 8, display: 'flex', gap: 6, alignItems: 'center' }}>
-        <div style={{ display: 'flex' }}>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button type="button" className="px-2 py-1 text-sm rounded-md border border-main-view-fg/10 hover:bg-main-view-fg/3" style={{ background: 'transparent' }}>
-                {selectedFolders.length === 0 ? 'Projects' : `${selectedFolders.length} selected`}
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="bottom" className="w-56 max-h-60 overflow-y-auto z-[95]">
-              <DropdownMenuItem onSelect={(e: any) => { e.preventDefault(); setSelectedFolders([]); onMetaChange?.({ ...(meta || {}), folders: [] }) }}>
-                <div className="flex items-center justify-between w-full">
-                  <span className="truncate max-w-[220px]">Any Project</span>
-                </div>
-              </DropdownMenuItem>
-              {folders && folders.map((f: any) => {
-                const selected = selectedFolders.includes(f.id)
-                return (
-                  <DropdownMenuItem key={f.id} onSelect={(e: any) => {
-                    e.preventDefault()
-                    setSelectedFolders((prev) => {
-                      const next = prev.includes(f.id) ? prev.filter((id) => id !== f.id) : [...prev, f.id]
-                      onMetaChange?.({ ...(meta || {}), folders: next })
-                      return next
-                    })
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
-                      {selected && <IconCheck size={14} className="text-main-view-fg/80" />}
-                    </div>
-                  </DropdownMenuItem>
-                )
-              })}
-              {selectedFolders.length > 0 && (
-                <DropdownMenuItem onSelect={(e: any) => { e.preventDefault(); setSelectedFolders([]); onMetaChange?.({ ...(meta || {}), folders: [] }) }}>
-                  <span className="text-sm text-main-view-fg/60">Clear</span>
-                </DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-
-        <div style={{ display: 'flex', flex: 1 }}>
-          <div className="px-2 py-1 text-sm rounded-md border border-main-view-fg/10" style={{ width: '100%', textAlign: 'left' }}>
-            Trigger when a new thread is created{selectedFolders.length > 0 ? ` in ${selectedFolders.length} project(s)` : ''}
-          </div>
-        </div>
-      </div>
+    <NodeBase id={id} selected={selected} title="Thread Created Trigger" inputs={[]} outputs={[{ id: 'out', label: 'Trigger', kind: portEnum.Output, showLabel: true }]} activePortId={activePortId} activePortKind={activePortKind}>
+      
     </NodeBase>
   )
 }
