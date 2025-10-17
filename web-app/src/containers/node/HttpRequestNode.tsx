@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { NodeType } from '@/lib/node'
 import { portEnum } from '@/containers/whiteboard/portTypes'
 import SmartInput from '@/containers/SmartInput'
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { GLOBAL_SUGGESTIONS, resolveGlobal } from '@/lib/globals'
 import { evaluateExpression } from '@/lib/expression'
 
@@ -161,13 +162,16 @@ export function NodeConfig({ meta, setMeta }: { meta?: Record<string, any>; setM
   return (
     <div className="flex flex-col gap-3" style={{ position: 'relative' }}>
       <label className="text-sm font-medium">Method</label>
-      <select value={method} onChange={(e) => { setMethod(e.target.value); write({ method: e.target.value }) }} className="p-2 rounded border w-full">
-        <option>GET</option>
-        <option>POST</option>
-        <option>PUT</option>
-        <option>DELETE</option>
-        <option>PATCH</option>
-      </select>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button className="p-2 rounded border w-full text-left">{method}</button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent className="w-full">
+          {['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD'].map((m) => (
+            <DropdownMenuItem key={m} onSelect={() => { setMethod(m); write({ method: m }) }}>{m}</DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
 
   <label className="text-sm font-medium">URL</label>
   <SmartInput value={url} onChange={(v) => { setUrl(v); write({ url: v }) }} placeholder="https://api.example.com/path" className="" suggestionsSource={[...GLOBAL_SUGGESTIONS]} sample={sample} meta={metaObj} />
@@ -178,8 +182,12 @@ export function NodeConfig({ meta, setMeta }: { meta?: Record<string, any>; setM
   <label className="text-sm font-medium">Headers (one per line Key: Value)</label>
   <SmartInput multiline rows={6} value={headersRaw} onChange={(v) => { setHeadersRaw(v); write({ headersRaw: v }) }} className="" suggestionsSource={[...GLOBAL_SUGGESTIONS]} sample={sample} meta={metaObj} />
 
-  <label className="text-sm font-medium">Body (for POST/PUT/PATCH)</label>
-  <SmartInput multiline rows={10} value={body} onChange={(v) => { setBody(v); write({ body: v }) }} className="" suggestionsSource={[...GLOBAL_SUGGESTIONS]} sample={sample} meta={metaObj} />
+  {method.toUpperCase() !== 'GET' && method.toUpperCase() !== 'HEAD' && (
+    <>
+      <label className="text-sm font-medium">Body (for POST/PUT/PATCH)</label>
+      <SmartInput multiline rows={10} value={body} onChange={(v) => { setBody(v); write({ body: v }) }} className="" suggestionsSource={[...GLOBAL_SUGGESTIONS]} sample={sample} meta={metaObj} />
+    </>
+  )}
 
       <div>
         <div className="text-sm font-medium">Preview</div>
@@ -249,7 +257,7 @@ export async function execute(input?: any, meta?: Record<string, any>, context?:
   
   try {
     
-  console.log("HTTP Request execute")
+    console.log("HTTP Request execute")
     const resp = await fetch(finalUrl, { ...fetchOpts, signal: context && context.signal })
     console.log(resp)
     const text = await resp.text()

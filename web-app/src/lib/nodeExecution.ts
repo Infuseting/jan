@@ -278,9 +278,16 @@ export async function runAndPropagate(
           const matchingOuts = getOutgoing ? getOutgoing(elementId).filter((o) => o.fromPortId === crPort) : []
           if (matchingOuts.length > 0) {
             console.debug('[nodeExecution] runAndPropagate: propagating bubbled result from current element', { elementId, crPort, matchingOuts })
-            const visitedForBubbled = new Set<string>()
+            // seed bubbled visited with outer visited to avoid re-executing nodes already traversed
+            const visitedForBubbled = new Set<string>(visited)
             const bubbledPath = [...myPath, `${elementId}#bubbled`]
             for (const mo of matchingOuts) {
+              // skip bubbled propagation to targets that were already visited earlier in this run
+              const alreadyVisitedAny = Array.from(visited).some((k) => k.startsWith(`${mo.targetElementId}::`))
+              if (alreadyVisitedAny) {
+                console.debug('[nodeExecution] runAndPropagate: skipping bubbled target already visited', { from: elementId, to: mo.targetElementId, targetVisitedKeyPrefix: `${mo.targetElementId}::` })
+                continue
+              }
               const tgt = resolveTarget(mo.targetElementId)
               if (!tgt || !tgt.executor) continue
               const nextInputB = mapResultToInput ? mapResultToInput(crOutput, crPort, elementId, mo.targetElementId, mo.targetPortId) : crOutput

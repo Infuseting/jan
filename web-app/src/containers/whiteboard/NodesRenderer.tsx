@@ -126,7 +126,6 @@ export default function NodesRenderer({ elements, elementsAll, selectedIds, acti
         }
         return null
       })}
-      <div style={{ width: '100%', height: '100%' }} />
     </>
   )
 }

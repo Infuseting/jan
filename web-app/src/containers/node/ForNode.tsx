@@ -48,7 +48,7 @@ export default function Node({ id, selected, activePortId, activePortKind }: { i
             const st = Number((meta?.step) ?? step)
             if (!Number.isNaN(s) && !Number.isNaN(e) && !Number.isNaN(st) && st !== 0) {
               // compute count using step (inclusive of end when it fits the step sequence)
-              const total = Math.floor((e - s) / Math.abs(st)) + 1
+              const total = Math.floor((e - s) / Math.abs(st))
               const len = Math.max(0, total)
               iterable = Array.from({ length: len }, (_, i) => s + i * st)
             }

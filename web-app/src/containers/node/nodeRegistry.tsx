@@ -7,6 +7,7 @@ import { getNodeEntry as getThreadMessageNodeEntry } from './ThreadMessageTrigge
 import { getNodeEntry as getThreadCreatedNodeEntry } from './ThreadCreatedTrigger'
 import { getNodeEntry as getManualNodeEntry } from './ManualTrigger'
 import { getNodeEntry as getHttpRequestNodeEntry } from './HttpRequestNode'
+import { getNodeEntry as getSwitchNodeEntry } from './SwitchNode'
 import { getNodeEntry as getPrintNodeEntry } from './PrintNode'
 import React from 'react'
 import { NodeType } from '@/lib/node'
@@ -64,6 +65,7 @@ const registry: NodeEntry[] = [
   getThreadCreatedNodeEntry(),
   getManualNodeEntry(),
   getHttpRequestNodeEntry(),
+  getSwitchNodeEntry(),
   getPrintNodeEntry(),
 ]
 

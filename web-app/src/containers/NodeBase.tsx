@@ -17,14 +17,22 @@ export type NodeProps = {
 }
 
 export default function NodeBase({ id, title = 'Node', inputs = [], outputs = [], className = '', activePortId = null, activePortKind = null, selected = false, onClick }: NodeProps) {
+  // compute a minimum height in pixels so nodes stay at least h-40 (160px)
+  // but grow vertically to fit ports: approximate per-port vertical spacing
+  const maxPorts = Math.max(inputs.length, outputs.length, 1)
+  const perPortPx = 28 // approximate vertical space per port (including margin)
+  const baseMinPx = 160 // h-40 in Tailwind = 10rem = 160px
+  const computedMinHeight = Math.max(baseMinPx, maxPorts * perPortPx + 32)
+
   return (
     <div
       data-node-id={id}
       onClick={onClick}
       className={`relative bg-main-view-fg/5 ${selected ? 'border-primary border' : 'border border-main-view-fg/10'} rounded-md p-3 shadow-sm inline-block ${className}`}
+      style={{ minHeight: computedMinHeight }}
     >
-      <div className="flex justify-between items-center w-40 h-40 cursor-pointer">
-        <h1 className="text-md font-medium text-main-view-fg/80 text-center w-full ">{title}</h1>        
+      <div className="flex justify-between items-center w-40 cursor-pointer">
+        <h1 className="text-md font-medium text-main-view-fg/80 text-center w-full ">{title}</h1>
       </div>
         {inputs.length > 0 && (
           <>
