@@ -9,6 +9,7 @@ import { getNodeEntry as getManualNodeEntry } from './ManualTrigger'
 import { getNodeEntry as getHttpRequestNodeEntry } from './HttpRequestNode'
 import { getNodeEntry as getSwitchNodeEntry } from './SwitchNode'
 import { getNodeEntry as getPrintNodeEntry } from './PrintNode'
+import { getNodeEntry as getAgentNodeEntry } from './AgentNode'
 import React from 'react'
 import { NodeType } from '@/lib/node'
 
@@ -67,6 +68,7 @@ const registry: NodeEntry[] = [
   getHttpRequestNodeEntry(),
   getSwitchNodeEntry(),
   getPrintNodeEntry(),
+  getAgentNodeEntry(),
 ]
 
 export const nodeRegistry = registry

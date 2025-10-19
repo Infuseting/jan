@@ -806,10 +806,48 @@ const Whiteboard = React.forwardRef(function Whiteboard({ minScale = 0.1, maxSca
   const deleteSelected = () => {
     if (selectedIds.length === 0) return
     pushHistory()
+    // remove the selected elements
     setElements((arr) => arr.filter((it) => !selectedIds.includes(it.id)))
+    // also remove any connections that reference the removed nodes (either as source or target)
+    setConnections((arr) => arr.filter((c) => !selectedIds.includes(c.from.nodeId) && !selectedIds.includes(c.to.nodeId)))
     setSelectedIds([])
     needsSaveRef.current = true
   }
+
+  // Auto-clean: if elements change and some connections reference node ids that no longer exist,
+  // remove those connections. This keeps the board consistent when nodes are removed programmatically
+  // or via undo/redo paths that didn't explicitly update connections.
+  // Only run cleanup when elements have been removed. This prevents races where elements are
+  // being added (e.g., paste) and connections for those new elements are temporarily absent.
+  const prevElementsRef = useRef<WBElement[] | null>(null)
+  useEffect(() => {
+    const prev = prevElementsRef.current || []
+    // if no previous snapshot, initialize and skip cleaning
+    if (!prev || prev.length === 0) {
+      prevElementsRef.current = elements
+      return
+    }
+
+    // Only clean up when elements were removed (length decreased) or when specific ids were removed
+    if (elements.length >= prev.length) {
+      // update previous snapshot and skip cleaning to avoid removing connections during adds
+      prevElementsRef.current = elements
+      return
+    }
+
+    const ids = new Set(elements.map((e) => e.id))
+    setConnections((arr) => {
+      const cleaned = arr.filter((c) => ids.has(c.from.nodeId) && ids.has(c.to.nodeId))
+      if (cleaned.length === arr.length) {
+        prevElementsRef.current = elements
+        return arr
+      }
+      // don't push history here; the mutation that removed elements should already have recorded history
+      needsSaveRef.current = true
+      prevElementsRef.current = elements
+      return cleaned
+    })
+  }, [elements])
 
   // copy selected
   const copySelected = () => {

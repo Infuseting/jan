@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle } f
 import { createPortal } from 'react-dom'
 import { GLOBAL_SUGGESTIONS, resolveGlobal } from '@/lib/globals'
 import { evaluateExpressionToBoolean } from '@/lib/expression'
-
+import TextareaAutosize from 'react-textarea-autosize'
 type Suggestion = string
 
 type SmartInputProps = {
@@ -215,7 +215,7 @@ export default forwardRef(function SmartInput(props: SmartInputProps, ref: any) 
           className="p-2 rounded border w-full"
         />
       ) : (
-        <textarea
+        <TextareaAutosize
           ref={inputRef as any}
           value={text}
           rows={rows}

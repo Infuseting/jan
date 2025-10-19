@@ -1,3 +1,4 @@
+import React from 'react'
 import { useEffect, useState } from 'react'
 
 import {
@@ -17,8 +18,6 @@ import { Switch } from '@/components/ui/switch'
 
 import { useThreads } from '@/hooks/useThreads'
 import { useToolAvailable } from '@/hooks/useToolAvailable'
-
-import React from 'react'
 import { useAppState } from '@/hooks/useAppState'
 import { useTranslation } from '@/i18n/react-i18next-compat'
 import { cn } from '@/lib/utils'
@@ -27,12 +26,16 @@ interface DropdownToolsAvailableProps {
   children: (isOpen: boolean, toolsCount: number) => React.ReactNode
   initialMessage?: boolean
   onOpenChange?: (isOpen: boolean) => void
+  onPick?: (toolName: string) => void
+  onToggleServer?: (serverName: string, enabled: boolean) => void
 }
 
 export default function DropdownToolsAvailable({
   children,
   initialMessage = false,
   onOpenChange,
+  onPick,
+  onToggleServer,
 }: DropdownToolsAvailableProps) {
   const tools = useAppState((state) => state.tools)
   const [isOpen, setIsOpen] = useState(false)
@@ -93,6 +96,11 @@ export default function DropdownToolsAvailable({
     serverName: string,
     disable: boolean
   ) => {
+    // If consumer provided server toggle handler, delegate
+    if (onToggleServer) {
+      onToggleServer(serverName, !disable)
+      return
+    }
     const allToolsByServer = getToolsByServer()
     const serverTools = allToolsByServer[serverName] || []
     serverTools.forEach((tool) => {
@@ -211,10 +219,21 @@ export default function DropdownToolsAvailable({
                         return (
                           <DropDrawerItem
                             onClick={(e) => {
+                              // If consumer wants picker behavior, call onPick instead of toggling thread defaults
+                              if (onPick) {
+                                onPick(tool.name)
+                                e.preventDefault()
+                                return
+                              }
                               handleToolToggle(tool.name, !isChecked)
                               e.preventDefault()
                             }}
                             onSelect={(e) => {
+                              if (onPick) {
+                                onPick(tool.name)
+                                e.preventDefault()
+                                return
+                              }
                               handleToolToggle(tool.name, !isChecked)
                               e.preventDefault()
                             }}
@@ -224,7 +243,11 @@ export default function DropdownToolsAvailable({
                               <Switch
                                 checked={isChecked}
                                 onCheckedChange={(checked) => {
-                                  console.log('checked', checked)
+                                  if (onPick) {
+                                    // in picker mode, switches should toggle selection via onPick
+                                    onPick(tool.name)
+                                    return
+                                  }
                                   handleToolToggle(tool.name, checked)
                                 }}
                                 onClick={(e) => {
@@ -265,3 +288,4 @@ export default function DropdownToolsAvailable({
     </DropDrawer>
   )
 }
+
