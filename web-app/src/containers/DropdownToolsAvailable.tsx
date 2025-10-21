@@ -28,6 +28,8 @@ interface DropdownToolsAvailableProps {
   onOpenChange?: (isOpen: boolean) => void
   onPick?: (toolName: string) => void
   onToggleServer?: (serverName: string, enabled: boolean) => void
+  isToolCheckedOverride?: (toolName: string) => boolean
+  onToolToggleOverride?: (toolName: string, checked: boolean) => void
 }
 
 export default function DropdownToolsAvailable({
@@ -36,6 +38,8 @@ export default function DropdownToolsAvailable({
   onOpenChange,
   onPick,
   onToggleServer,
+  isToolCheckedOverride,
+  onToolToggleOverride,
 }: DropdownToolsAvailableProps) {
   const tools = useAppState((state) => state.tools)
   const [isOpen, setIsOpen] = useState(false)
@@ -65,6 +69,14 @@ export default function DropdownToolsAvailable({
   }, [currentThread?.id, tools, initializeThreadTools])
 
   const handleToolToggle = (toolName: string, checked: boolean) => {
+    // If consumer provided override, delegate and skip local store update
+    if (onToolToggleOverride) {
+      try {
+        console.log('[DropdownToolsAvailable] onToolToggleOverride ->', toolName, checked)
+      } catch (e) {}
+      onToolToggleOverride(toolName, checked)
+      return
+    }
     if (initialMessage) {
       // Update default tools for new threads/index page
       const currentDefaults = getDefaultDisabledTools()
@@ -82,6 +94,7 @@ export default function DropdownToolsAvailable({
   }
 
   const isToolChecked = (toolName: string): boolean => {
+    if (isToolCheckedOverride) return isToolCheckedOverride(toolName)
     if (initialMessage) {
       // Use default tools for index page
       return !getDefaultDisabledTools().includes(toolName)
@@ -219,7 +232,12 @@ export default function DropdownToolsAvailable({
                         return (
                           <DropDrawerItem
                             onClick={(e) => {
-                              // If consumer wants picker behavior, call onPick instead of toggling thread defaults
+                              // Prefer explicit toggle override, then picker behavior
+                              if (onToolToggleOverride) {
+                                onToolToggleOverride(tool.name, !isChecked)
+                                e.preventDefault()
+                                return
+                              }
                               if (onPick) {
                                 onPick(tool.name)
                                 e.preventDefault()
@@ -229,6 +247,11 @@ export default function DropdownToolsAvailable({
                               e.preventDefault()
                             }}
                             onSelect={(e) => {
+                              if (onToolToggleOverride) {
+                                onToolToggleOverride(tool.name, !isChecked)
+                                e.preventDefault()
+                                return
+                              }
                               if (onPick) {
                                 onPick(tool.name)
                                 e.preventDefault()
@@ -243,6 +266,10 @@ export default function DropdownToolsAvailable({
                               <Switch
                                 checked={isChecked}
                                 onCheckedChange={(checked) => {
+                                  if (onToolToggleOverride) {
+                                    onToolToggleOverride(tool.name, checked)
+                                    return
+                                  }
                                   if (onPick) {
                                     // in picker mode, switches should toggle selection via onPick
                                     onPick(tool.name)

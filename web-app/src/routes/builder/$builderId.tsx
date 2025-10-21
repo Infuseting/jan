@@ -7,7 +7,7 @@ import { useLeftPanel } from '@/hooks/useLeftPanel'
 import { Button } from '@/components/ui/button'
 import * as publishService from '@/services/publish'
 import { isPlatformTauri } from '@/lib/platform'
-import { IconArrowLeft, IconDeviceFloppy, IconPlayCard1, IconPlayerPlay } from '@tabler/icons-react'
+import { IconArrowLeft, IconPlayerPlay } from '@tabler/icons-react'
 
 export const Route = createFileRoute('/builder/$builderId')({
   component: RouteComponent,
@@ -21,6 +21,8 @@ function RouteComponent() {
   const { open: leftOpen, setLeftPanel } = useLeftPanel()
   const prevLeftOpen = useRef<boolean>(leftOpen)
   const wbRef = useRef<any>(null)
+  // store previous open state when hovering whiteboard
+  const prevLeftOpenHoverRef = useRef<boolean | null>(null)
 
   const builder = getBuilderById(builderId)
   const [publishEnabled, setPublishEnabled] = useState<boolean>(() => {
@@ -48,7 +50,12 @@ function RouteComponent() {
 
   // Hide left panel on mount, restore previous state on unmount
   useEffect(() => {
-    prevLeftOpen.current = leftOpen
+    // Read the latest value from the store to avoid stale closure values
+    try {
+      prevLeftOpen.current = useLeftPanel.getState().open
+    } catch {
+      prevLeftOpen.current = leftOpen
+    }
     setLeftPanel(false)
     return () => {
       setLeftPanel(prevLeftOpen.current)
@@ -134,7 +141,7 @@ function RouteComponent() {
         </div>
         <div className="right-4 flex items-center gap-2 pr-4">
           <Button
-            variant="outline"
+            variant="default"
             size="sm"
             className="flex items-center gap-1 border-1 border-main-view-fg/20"
           ><IconPlayerPlay />Preview</Button>
@@ -167,7 +174,27 @@ function RouteComponent() {
 
 
       {/* Whiteboard fills remaining area */}
-      <div className="absolute inset-0">
+      <div
+        className="absolute inset-0"
+        onPointerEnter={() => {
+          try {
+            // remember previous state only once per hover
+            if (prevLeftOpenHoverRef.current === null) {
+              prevLeftOpenHoverRef.current =
+                prevLeftOpen.current ?? useLeftPanel.getState().open ?? leftOpen
+              setLeftPanel(false)
+            }
+          } catch (e) {}
+        }}
+        onPointerLeave={() => {
+          try {
+            if (prevLeftOpenHoverRef.current !== null) {
+              setLeftPanel(prevLeftOpenHoverRef.current)
+              prevLeftOpenHoverRef.current = null
+            }
+          } catch (e) {}
+        }}
+      >
         {/* Only mount Whiteboard after we've resolved initialBoard (undefined = loading) */}
         {initialBoard !== undefined && (
           <Whiteboard

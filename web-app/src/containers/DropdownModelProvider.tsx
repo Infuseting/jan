@@ -531,7 +531,25 @@ const DropdownModelProvider = ({
           </div>
 
           {/* Model list */}
-          <div className="max-h-[320px] overflow-y-auto">
+          <div className="max-h-[320px] overflow-y-auto"
+            onWheel={(e) => {
+              // When the dropdown is open, ensure the wheel scrolls the dropdown
+              // and doesn't propagate to the page. If the container can still scroll
+              // in the direction of the wheel, prevent default to keep focus on list.
+              const target = e.currentTarget as HTMLElement
+              const delta = e.deltaY
+              const atTop = target.scrollTop === 0
+              const atBottom = target.scrollHeight - target.clientHeight === target.scrollTop
+
+              if ((delta < 0 && !atTop) || (delta > 0 && !atBottom)) {
+                // Allow the container to scroll and prevent page from scrolling
+                e.stopPropagation()
+                // preventDefault to avoid outer scroll in some browsers
+                e.preventDefault()
+                target.scrollBy({ top: delta, behavior: 'auto' })
+              }
+            }}
+          >
             {Object.keys(groupedItems).length === 0 && searchValue ? (
               <div className="py-3 px-4 text-sm text-main-view-fg/60">
                 {t('common:noModelsFoundFor', { searchValue })}
