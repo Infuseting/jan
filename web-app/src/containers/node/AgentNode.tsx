@@ -37,7 +37,7 @@ export default function Node({ id, meta, selected, activePortId, activePortKind 
     <NodeBase
       id={id}
       selected={selected}
-      title={`Agent: ${assistantName}`}
+      title={`Agent AI`}
       inputs={[{ id: 'in', label: 'Trigger', kind: portEnum.Input, showLabel: true }]}
         outputs={[{ id: 'success', label: 'Success', kind: portEnum.Output, showLabel: true }, { id: 'error', label: 'Error', kind: portEnum.Output, showLabel: true }]}
       activePortId={activePortId}

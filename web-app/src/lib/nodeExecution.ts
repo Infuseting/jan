@@ -135,16 +135,91 @@ export async function runExecutorForElement(
   // pass the controller signal and preserve any runKey/runPath in context
   const context = Object.assign({}, ctx || {}, { signal: controller.signal })
 
+  // ensure runtime node meta store exists on globalThis so globals.getNode() can access it
+  try {
+    if (!(globalThis as any).__JAN_RUNTIME_NODES__) (globalThis as any).__JAN_RUNTIME_NODES__ = {}
+  } catch {}
+
   console.debug('[nodeExecution] runExecutorForElement: start', { elementId, nodeId })
   emitter.emit('start', { elementId, nodeId })
 
   try {
-    const maybe = executor(input, meta, context)
+    // Prepare a safe shallow copy of meta to store in runtime store (strip runtime fields to avoid circular refs)
+    try {
+      const store = (globalThis as any).__JAN_RUNTIME_NODES__ as Record<string, any>
+      const safeMeta = Object.assign({}, meta || {})
+      // remove any nodes/lastNode/predictedOutputs/lastResult to avoid cycles
+      try { delete (safeMeta as any).nodes } catch {}
+      try { delete (safeMeta as any).lastNode } catch {}
+      try { delete (safeMeta as any).predictedOutputs } catch {}
+      try { delete (safeMeta as any).lastResult } catch {}
+      // store a shallow snapshot (sample included)
+      store[elementId] = Object.assign({}, safeMeta, { sample: input })
+    } catch (e) { console.debug('[nodeExecution] runExecutorForElement: unable to populate runtime nodes store', e) }
+
+    // set lastNode global from context if provided (executor directly receives prior lastNode via ctx._lastNode too)
+    try {
+      const lastNode = ctx && (ctx as any)._lastNode
+      if (lastNode !== undefined) (globalThis as any).__JAN_LAST_NODE__ = lastNode
+    } catch {}
+
+    // Build an executor-local meta that has a safe `nodes` map injected, but do NOT mutate the original `meta` object
+    let execMeta: Record<string, any> | undefined = undefined
+    try {
+      execMeta = meta && typeof meta === 'object' ? Object.assign({}, meta) : {}
+      // ensure execMeta.nodes is a shallow mapping of runtime store entries (safe copies)
+      const store = (globalThis as any).__JAN_RUNTIME_NODES__ as Record<string, any> || {}
+      execMeta.nodes = Object.assign({}, execMeta.nodes || {})
+      for (const k of Object.keys(store)) {
+        if (!(k in execMeta.nodes)) {
+          // shallow copy of store entry so executor code doesn't get references into internal store
+          try { execMeta.nodes[k] = Object.assign({}, store[k]) } catch { execMeta.nodes[k] = store[k] }
+        }
+      }
+      // also expose lastNode on execMeta (safe copy)
+      try { execMeta.lastNode = Object.assign({}, (globalThis as any).__JAN_LAST_NODE__) } catch { execMeta.lastNode = (globalThis as any).__JAN_LAST_NODE__ }
+    } catch (e) { execMeta = meta }
+
+    // set an execution context so globals.getNode and $lastNode resolve to execution-local values
+    try {
+      (globalThis as any).__JAN_EXEC_CONTEXT__ = { nodes: execMeta && execMeta.nodes ? execMeta.nodes : {}, lastNode: execMeta && execMeta.lastNode ? execMeta.lastNode : undefined }
+    } catch {}
+    const maybe = executor(input, execMeta, context)
     // support sync or promise
     const result = await Promise.resolve(maybe)
     // if execution wasn't aborted during await
     if (!controller.signal.aborted) {
       runningControllers.delete(compositeKey)
+      // after successful finish, capture the returned meta (if any) as lastNode for downstream
+      try {
+        // normalise executor return: { portId?, output? } or raw
+        let normalized: any
+  if (result && typeof result === 'object' && ('portId' in result || 'output' in result)) normalized = result
+  else normalized = { output: result };
+        (globalThis as any).__JAN_LAST_NODE__ = normalized
+        // also update runtime nodes store for this element so globals.getNode can have recent outputs
+        try {
+          const store = (globalThis as any).__JAN_RUNTIME_NODES__ as Record<string, any>
+          if (store) {
+            // merge into existing stored snapshot but avoid reintroducing nodes
+            const prev = store[elementId] || {}
+            const merged = Object.assign({}, prev, { sample: input, lastResult: normalized })
+            try { delete (merged as any).nodes } catch {}
+            store[elementId] = merged
+            try {
+              // predictedOutputs: map from portId (or 'out') to example value
+              const portsMap: Record<string, any> = {}
+              if (normalized && typeof normalized === 'object' && 'portId' in normalized) {
+                const p = normalized.portId || 'out'
+                portsMap[p] = normalized.output
+              } else {
+                portsMap['out'] = normalized.output
+              }
+              store[elementId].predictedOutputs = portsMap
+            } catch (e) { /* ignore */ }
+          }
+        } catch (e) { /* ignore */ }
+      } catch (e) { console.debug('[nodeExecution] runExecutorForElement: set lastNode failed', e) }
       emitter.emit('finish', { elementId, nodeId, result })
       console.debug('[nodeExecution] runExecutorForElement: finish', { elementId, nodeId, result })
     } else {
@@ -153,8 +228,12 @@ export async function runExecutorForElement(
       emitter.emit('cancel', { elementId, nodeId })
       console.info('[nodeExecution] runExecutorForElement: canceled during await', { elementId, nodeId })
     }
+    // cleanup exec context
+    try { delete (globalThis as any).__JAN_EXEC_CONTEXT__ } catch {}
     return result
   } catch (err) {
+    // cleanup exec context on error as well
+    try { delete (globalThis as any).__JAN_EXEC_CONTEXT__ } catch {}
     runningControllers.delete(compositeKey)
     // emit error event
     emitter.emit('error', { elementId, nodeId, error: err })
@@ -213,6 +292,9 @@ export async function runAndPropagate(
   const runPathKey = myPath.join('>')
   const ctxWithPath = Object.assign({}, ctx || {}, { runPath: runPathKey })
 
+  // Do not mutate the incoming `meta` here (can cause circular refs if it contains runtime fields).
+  // A safe exec-local meta with `nodes` is constructed in runExecutorForElement before calling the executor.
+
   console.debug('[nodeExecution] runAndPropagate: executing element', elementId, { nodeId, runPathKey })
 
   let resultRaw: any
@@ -267,7 +349,10 @@ export async function runAndPropagate(
     const nextInput = mapResultToInput ? mapResultToInput(resultOutput, resultPortId, elementId, out.targetElementId, out.targetPortId) : resultOutput
     try {
       console.debug('[nodeExecution] runAndPropagate: propagating from', elementId, 'to', out.targetElementId, { fromPortId: out.fromPortId, toPortId: out.targetPortId })
-      const childResult = await runAndPropagate(out.targetElementId, target.nodeId, target.executor, nextInput, target.meta, ctxWithPath, getOutgoing, resolveTarget, mapResultToInput, visited, myPath)
+      // build ctx for child that includes _lastNode = normalized result of THIS element
+      const normalizedThis = resultPortId ? { portId: resultPortId, output: resultOutput } : { output: resultOutput }
+      const ctxForChild = Object.assign({}, ctxWithPath, { _lastNode: normalizedThis })
+      const childResult = await runAndPropagate(out.targetElementId, target.nodeId, target.executor, nextInput, target.meta, ctxForChild, getOutgoing, resolveTarget, mapResultToInput, visited, myPath)
       // If the child returned a meaningful result (for example an 'exit' from an orchestrated loop), bubble it up
       if (childResult && typeof childResult === 'object' && ('portId' in childResult)) {
         console.debug('[nodeExecution] runAndPropagate: bubbling child result up', { from: out.targetElementId, childResult })

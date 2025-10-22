@@ -124,14 +124,61 @@ export default forwardRef(function SmartInput(props: SmartInputProps, ref: any) 
   }
 
   const insertSuggestionAtToken = (sugg: string) => {
+    console.log("Inserting suggestion:", sugg)
     const pos = caret ?? text.length
     const tokenInfo = computeToken(text, pos)
     if (!tokenInfo) return
     const before = text.slice(0, tokenInfo.start)
     const after = text.slice(pos)
-    const next = before + sugg + after
-    write(next)
-    const newPos = (before + sugg).length
+    // Detect whether the token position is inside quotes. If so, we must insert an
+    // escaped representation (so nested quotes/backslashes are preserved). If not,
+    // insert the raw suggestion (pretty JSON for objects/arrays when appropriate).
+    const isInsideQuotes = (() => {
+      try {
+        // Count unmatched single/double quotes before the token start to approximate
+        // whether we're inside a quoted string.
+        const beforeText = before
+        const dq = (beforeText.match(/"/g) || []).length
+        const sq = (beforeText.match(/\'/g) || []).length
+        return (dq % 2 === 1) || (sq % 2 === 1)
+      } catch { return false }
+    })()
+
+    const shouldTreatAsObject = (() => {
+      if (!sugg) return false
+      const t = (typeof sugg === 'string' ? sugg.trim() : JSON.stringify(sugg)).trim()
+      console.log("Suggestion text", t)
+      if (t.endsWith('()')) return false
+      return t.startsWith('{') || t.startsWith('[')
+    })()
+
+    const insertValue = (() => {
+      if (!shouldTreatAsObject) return sugg
+
+      // If we're inside quotes, produce an escaped inner string so that inserting
+      // into an existing quoted string remains valid JSON after outer serialization.
+      // We normalize both string suggestions (e.g. '{"a":1}') and object suggestions
+      // (actual objects) by stringifying appropriately, then JSON.stringify that string
+      // so we get proper escaping, and finally strip the outer quotes.
+      console.log("isInsideQuotes:", isInsideQuotes)
+      if (isInsideQuotes) {
+        try {
+          const normalized = (typeof sugg === 'string') ? sugg : JSON.stringify(sugg)
+          const escaped = JSON.stringify(normalized)
+          return escaped.length >= 2 ? escaped.slice(1, -1) : escaped
+        } catch { return (typeof sugg === 'string') ? sugg : JSON.stringify(sugg) }
+      }
+
+      // Not inside quotes: insert raw JSON. If suggestion is an object (not string),
+      // pretty-print it for readability.
+      try {
+        if (typeof sugg === 'string') return sugg
+        return JSON.stringify(sugg)
+      } catch { return sugg }
+    })()
+  const next = before + insertValue + after
+  write(next)
+  const newPos = (before + insertValue).length
     // If the suggestion ends with '()', place caret between the parentheses
     const placeInsideParens = sugg.endsWith('()')
     setTimeout(() => {

@@ -205,33 +205,42 @@ function RouteComponent() {
             builderId={builderId}
             initialBoard={initialBoard}
             onRequestSave={async (snap: any) => {
-              // sanitize helper
+              // sanitize helper: remove runtime-only fields and anything that may create circular refs
               function sanitizeBoardObject(boardObj: any) {
                 try {
                   if (boardObj && Array.isArray(boardObj.elements)) {
+                    boardObj = Object.assign({}, boardObj)
                     boardObj.elements = boardObj.elements.map((el: any) => {
                       if (el && el.meta && typeof el.meta === 'object') {
                         const meta = { ...el.meta }
+                        // remove transient runtime fields
                         delete meta.lastRunStatus
                         delete meta.lastRunAt
                         delete meta.lastRunResult
                         delete meta.lastRunError
                         delete meta.activePortId
                         delete meta.activePortKind
+                        // runtime stores added by executor/globals
+                        delete meta.nodes
+                        delete meta.lastNode
+                        delete meta.predictedOutputs
+                        delete meta.lastResult
                         return { ...el, meta }
                       }
                       return el
                     })
                   }
-                } catch (e) {}
+                } catch (e) { console.debug('[builder.save] sanitizeBoardObject failed', e) }
                 return boardObj
               }
+
               try {
                 const key = `builder:${builderId}:board`
+                const sanitized = sanitizeBoardObject(snap)
                 if (isPlatformTauri()) {
-                  await publishService.upsertBuilderBoard(builderId, JSON.stringify(snap))
+                  await publishService.upsertBuilderBoard(builderId, JSON.stringify(sanitized))
                 } else {
-                  localStorage.setItem(key, JSON.stringify(sanitizeBoardObject(snap)))
+                  localStorage.setItem(key, JSON.stringify(sanitized))
                 }
                 // touch builder updated_at
                 if (builder) await updateBuilder(builder.id, builder.name || '')
